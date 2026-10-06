@@ -1,0 +1,5 @@
+{
+  "name": "Malloc.ChannelPainter.Editor",
+  "rootNamespace": "Malloc.ChannelPainter.Editor",
+  "includePlatforms": ["Editor"]
+}

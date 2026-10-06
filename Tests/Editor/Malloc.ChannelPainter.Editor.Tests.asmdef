@@ -1,0 +1,10 @@
+{
+  "name": "Malloc.ChannelPainter.Editor.Tests",
+  "rootNamespace": "Malloc.ChannelPainter.Editor",
+  "references": ["Malloc.ChannelPainter.Editor"],
+  "includePlatforms": ["Editor"],
+  "overrideReferences": true,
+  "precompiledReferences": ["nunit.framework.dll"],
+  "autoReferenced": false,
+  "defineConstraints": ["UNITY_INCLUDE_TESTS"]
+}
