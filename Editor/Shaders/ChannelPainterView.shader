@@ -6,7 +6,8 @@ Shader "Hidden/ChannelPainter/View"
     }
     SubShader
     {
-        Tags { "RenderPipeline" = "UniversalPipeline" }
+        // Transparent queue so the mask always draws after the opaque target it overlays.
+        Tags { "RenderPipeline" = "UniversalPipeline" "Queue" = "Transparent" }
 
         HLSLINCLUDE
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"

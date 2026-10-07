@@ -73,8 +73,20 @@ namespace Malloc.ChannelPainter.Editor
                 GUI.BeginGroup(viewport);
                 main.ViewMaterial.SetFloat("_ViewChannel", main.ViewChannel);
                 main.ViewMaterial.SetTexture("_MainTex", main.Canvas.Texture);
-                Graphics.DrawTexture(canvasRect, main.Canvas.Texture, new Rect(0, 0, 1, 1),
-                    0, 0, 0, 0, main.ViewMaterial, 1);
+                // Graphics.DrawTexture with a custom material ignores the GUI clip, so clip by hand.
+                Rect visible = Rect.MinMaxRect(
+                    Mathf.Max(canvasRect.xMin, 0), Mathf.Max(canvasRect.yMin, 0),
+                    Mathf.Min(canvasRect.xMax, viewport.width), Mathf.Min(canvasRect.yMax, viewport.height));
+                if (visible.width > 0 && visible.height > 0)
+                {
+                    Rect source = Rect.MinMaxRect(
+                        (visible.xMin - canvasRect.xMin) / canvasRect.width,
+                        (canvasRect.yMax - visible.yMax) / canvasRect.height,
+                        (visible.xMax - canvasRect.xMin) / canvasRect.width,
+                        (canvasRect.yMax - visible.yMin) / canvasRect.height);
+                    Graphics.DrawTexture(visible, main.Canvas.Texture, source,
+                        0, 0, 0, 0, main.ViewMaterial, 1);
+                }
                 DrawOverlay(main, canvasRect, evt.mousePosition - viewport.position);
                 GUI.EndGroup();
             }

@@ -98,6 +98,29 @@ namespace Malloc.ChannelPainter.Editor
             }
         }
 
+        // Undo of a bake puts the pre-bake mesh back on the component; adopt it as the original
+        // and put the temporary mesh back, so the session and its save hooks stay consistent.
+        internal bool AdoptMeshAfterUndo()
+        {
+            if (!IsVertexColor || ended || renderer == null)
+                return false;
+            Mesh current = skinned != null ? skinned.sharedMesh : filter.sharedMesh;
+            if (current == null || current == temporaryMesh)
+                return false;
+            OriginalMesh = current;
+            SetMesh(temporaryMesh);
+            return true;
+        }
+
+        void RestoreOriginalForSave()
+        {
+            SetMesh(OriginalMesh);
+            Object component = skinned != null ? (Object)skinned : filter;
+            if (PrefabUtility.IsPartOfPrefabInstance(component))
+                PrefabUtility.RecordPrefabInstancePropertyModifications(component);
+            saving = true;
+        }
+
         void SetMesh(Mesh mesh)
         {
             if (skinned != null)
@@ -110,8 +133,7 @@ namespace Malloc.ChannelPainter.Editor
         {
             if (!ended && renderer != null && renderer.gameObject.scene == scene)
             {
-                SetMesh(OriginalMesh);
-                saving = true;
+                RestoreOriginalForSave();
             }
         }
 
@@ -129,8 +151,7 @@ namespace Malloc.ChannelPainter.Editor
             if (!ended && renderer != null && root != null &&
                 (renderer.gameObject == root || renderer.transform.IsChildOf(root.transform)))
             {
-                SetMesh(OriginalMesh);
-                saving = true;
+                RestoreOriginalForSave();
             }
         }
 

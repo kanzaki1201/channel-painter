@@ -100,6 +100,7 @@ namespace Malloc.ChannelPainter.Editor
             RenderPipelineManager.beginCameraRendering += OnBeginCameraRendering;
             AssemblyReloadEvents.beforeAssemblyReload += BeforeAssemblyReload;
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+            Undo.undoRedoPerformed += OnUndoRedo;
             Shader shader = Shader.Find("Hidden/ChannelPainter/View");
             if (shader != null)
                 viewMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
@@ -121,6 +122,9 @@ namespace Malloc.ChannelPainter.Editor
             RenderPipelineManager.beginCameraRendering -= OnBeginCameraRendering;
             AssemblyReloadEvents.beforeAssemblyReload -= BeforeAssemblyReload;
             EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+            Undo.undoRedoPerformed -= OnUndoRedo;
+            if (!reloading && IsDirty)
+                WriteCanvasFile();
             EndSession();
             ReleaseCanvas();
             if (posedMesh != null)
@@ -135,7 +139,7 @@ namespace Malloc.ChannelPainter.Editor
 
         void OnDestroy()
         {
-            if (!reloading && File.Exists(ReloadPath))
+            if (!reloading && !IsDirty && File.Exists(ReloadPath))
                 File.Delete(ReloadPath);
         }
 
@@ -143,6 +147,14 @@ namespace Malloc.ChannelPainter.Editor
         {
             if (SaveCurrentOutput())
                 base.SaveChanges();
+        }
+
+        public override void DiscardChanges()
+        {
+            ClearDirty();
+            if (File.Exists(ReloadPath))
+                File.Delete(ReloadPath);
+            base.DiscardChanges();
         }
 
         void OnGUI()
@@ -522,30 +534,41 @@ namespace Malloc.ChannelPainter.Editor
             reloading = true;
             try
             {
-                if (canvas != null && target != null)
-                {
-                    SyncCanvasState();
-                    var raw = new Texture2D(canvasSize, canvasSize, TextureFormat.RGBAHalf, false, true);
-                    RenderTexture previous = RenderTexture.active;
-                    try
-                    {
-                        RenderTexture.active = canvas.Texture;
-                        raw.ReadPixels(new Rect(0, 0, canvasSize, canvasSize), 0, 0, false);
-                        raw.Apply(false, false);
-                        Directory.CreateDirectory(Path.GetDirectoryName(ReloadPath));
-                        File.WriteAllBytes(ReloadPath, raw.GetRawTextureData<byte>().ToArray());
-                    }
-                    finally
-                    {
-                        RenderTexture.active = previous;
-                        DestroyImmediate(raw);
-                    }
-                }
+                WriteCanvasFile();
             }
             finally
             {
                 EndSession();
             }
+        }
+
+        // Also runs on a plain disable (maximize, layout change), so unsaved paint survives any window rebuild.
+        void WriteCanvasFile()
+        {
+            if (canvas == null || target == null)
+                return;
+            SyncCanvasState();
+            var raw = new Texture2D(canvasSize, canvasSize, TextureFormat.RGBAHalf, false, true);
+            RenderTexture previous = RenderTexture.active;
+            try
+            {
+                RenderTexture.active = canvas.Texture;
+                raw.ReadPixels(new Rect(0, 0, canvasSize, canvasSize), 0, 0, false);
+                raw.Apply(false, false);
+                Directory.CreateDirectory(Path.GetDirectoryName(ReloadPath));
+                File.WriteAllBytes(ReloadPath, raw.GetRawTextureData<byte>().ToArray());
+            }
+            finally
+            {
+                RenderTexture.active = previous;
+                DestroyImmediate(raw);
+            }
+        }
+
+        void OnUndoRedo()
+        {
+            if (session != null && session.AdoptMeshAfterUndo())
+                UpdateVertexColors(true);
         }
 
         void RestoreAfterReload()
@@ -662,7 +685,7 @@ namespace Malloc.ChannelPainter.Editor
 
         bool HandleSceneMouseUp(Event evt)
         {
-            if (evt.type != EventType.MouseUp || evt.button != 0)
+            if (evt.type != EventType.MouseUp || evt.button != 0 || !strokeSnapshotTaken)
                 return false;
             EndStroke();
             evt.Use();
