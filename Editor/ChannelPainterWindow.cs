@@ -4,6 +4,7 @@ using System.IO;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using UnityEditor;
+using UnityEditor.ShortcutManagement;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -79,6 +80,46 @@ namespace Malloc.ChannelPainter.Editor
         internal Mesh TargetMesh => target == null ? null : session != null ? session.OriginalMesh : SharedMesh();
         internal int TargetSlot => slot;
         internal bool IsPainting => paint;
+        internal Color BlendColor => blend == BrushBlend.Add ? new Color(0.35f, 1f, 0.45f)
+            : blend == BrushBlend.Subtract ? new Color(1f, 0.4f, 0.4f) : Color.white;
+        internal string StatusText => "Channel Painter  |  " + (tool == PaintTool.FillIsland ? "Fill Island" : "Brush") +
+            "  |  " + blend + "  |  " + ChannelText + "  (A add, S subtract, R replace)";
+        string ChannelText => (red ? "R" : "") + (green ? "G" : "") + (blue ? "B" : "") + (alpha ? "A" : "");
+
+        // Active only while painting, so A, S and R override the scene view tool shortcuts only then.
+        sealed class PaintShortcutContext : IShortcutContext
+        {
+            public bool active => Active != null && Active.paint;
+        }
+
+        static readonly PaintShortcutContext ShortcutContext = new PaintShortcutContext();
+
+        [Shortcut("Channel Painter/Blend Add", typeof(PaintShortcutContext), KeyCode.A)]
+        static void ShortcutAdd() => Active?.SetBlend(BrushBlend.Add);
+
+        [Shortcut("Channel Painter/Blend Subtract", typeof(PaintShortcutContext), KeyCode.S)]
+        static void ShortcutSubtract() => Active?.SetBlend(BrushBlend.Subtract);
+
+        [Shortcut("Channel Painter/Blend Replace", typeof(PaintShortcutContext), KeyCode.R)]
+        static void ShortcutReplace() => Active?.SetBlend(BrushBlend.Replace);
+
+        void SetBlend(BrushBlend next)
+        {
+            blend = next;
+            Repaint();
+            SceneView.RepaintAll();
+            ChannelPainterUVWindow.Active?.Repaint();
+        }
+
+        void DrawSceneStatus(SceneView view)
+        {
+            Handles.BeginGUI();
+            var content = new GUIContent(StatusText);
+            var style = new GUIStyle(EditorStyles.helpBox) { fontSize = 12, normal = { textColor = BlendColor } };
+            Vector2 size = style.CalcSize(content);
+            GUI.Box(new Rect(10, view.position.height - size.y - 34, size.x + 6, size.y + 4), content, style);
+            Handles.EndGUI();
+        }
         internal bool IsFillIsland => tool == PaintTool.FillIsland;
         internal bool HasHoverUV => hasHoverUV;
         internal Vector2 HoverUV => hoverUV;
@@ -118,6 +159,7 @@ namespace Malloc.ChannelPainter.Editor
             AssemblyReloadEvents.beforeAssemblyReload += BeforeAssemblyReload;
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
             Undo.undoRedoPerformed += OnUndoRedo;
+            ShortcutManager.RegisterContext(ShortcutContext);
             Shader shader = Shader.Find("Hidden/ChannelPainter/View");
             if (shader != null)
                 viewMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
@@ -140,6 +182,7 @@ namespace Malloc.ChannelPainter.Editor
             AssemblyReloadEvents.beforeAssemblyReload -= BeforeAssemblyReload;
             EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
             Undo.undoRedoPerformed -= OnUndoRedo;
+            ShortcutManager.UnregisterContext(ShortcutContext);
             if (!reloading && IsDirty)
                 WriteCanvasFile();
             EndSession();
@@ -838,6 +881,8 @@ namespace Malloc.ChannelPainter.Editor
         {
             if (!paint || target == null || canvas == null || session == null)
                 return;
+            if (Event.current.type == EventType.Repaint)
+                DrawSceneStatus(view);
             if (tool == PaintTool.FillIsland)
             {
                 HandleFillSceneGUI(view);
@@ -876,7 +921,11 @@ namespace Malloc.ChannelPainter.Editor
             if (HandleSceneKey(evt, view))
                 return;
             if (evt.type == EventType.Repaint && hasHit)
+            {
+                Handles.color = BlendColor;
                 Handles.DrawWireDisc(hitPoint, hitNormal, radius);
+                Handles.color = Color.white;
+            }
             if (evt.type != EventType.MouseMove && evt.type != EventType.MouseDown &&
                 evt.type != EventType.MouseDrag)
                 return;

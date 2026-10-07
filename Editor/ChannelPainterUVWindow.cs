@@ -112,6 +112,12 @@ namespace Malloc.ChannelPainter.Editor
                 }
                 showUV = GUILayout.Toggle(showUV, "UV Overlay", EditorStyles.toolbarButton);
                 GUILayout.FlexibleSpace();
+                if (main != null && main.IsPainting)
+                {
+                    var status = new GUIStyle(EditorStyles.boldLabel) { normal = { textColor = main.BlendColor } };
+                    GUILayout.Label(main.StatusText, status);
+                    GUILayout.FlexibleSpace();
+                }
                 GUILayout.Label("Radius");
                 brushRadius = Mathf.Clamp(EditorGUILayout.FloatField(brushRadius, GUILayout.Width(48)), 1, 512);
                 if (GUILayout.Button("Fit", EditorStyles.toolbarButton))
@@ -153,7 +159,7 @@ namespace Malloc.ChannelPainter.Editor
 
             if (canvasRect.Contains(mouse) && !main.IsFillIsland)
             {
-                Handles.color = Color.white;
+                Handles.color = main.BlendColor;
                 float radius = brushRadius * canvasRect.width / main.Canvas.Texture.width;
                 Handles.DrawWireDisc(mouse, Vector3.forward, radius);
             }
