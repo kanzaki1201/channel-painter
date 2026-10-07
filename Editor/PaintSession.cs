@@ -53,7 +53,7 @@ namespace Malloc.ChannelPainter.Editor
                 renderer.GetPropertyBlock(originalBlock, slot);
                 var block = new MaterialPropertyBlock();
                 renderer.GetPropertyBlock(block, slot);
-                block.SetTexture(property, canvas.Texture);
+                block.SetTexture(property, canvas.Preview);
                 renderer.SetPropertyBlock(block, slot);
             }
         }

@@ -20,6 +20,8 @@ namespace Malloc.ChannelPainter.Editor
         readonly RenderTexture dilationNext;
 
         public RenderTexture Texture { get; }
+        // Dilated copy for display: bilinear sampling on sub-texel UV slivers reads the island fringe.
+        public RenderTexture Preview { get; }
         public Vector4 PaintedChannels { get; private set; }
         public bool CanUndo => snapshots.Count > 0;
 
@@ -36,9 +38,16 @@ namespace Malloc.ChannelPainter.Editor
             coverageNext = CreateTexture(size, RenderTextureFormat.R8);
             dilated = CreateTexture(size, RenderTextureFormat.ARGBHalf);
             dilationNext = CreateTexture(size, RenderTextureFormat.ARGBHalf);
+            Preview = CreateTexture(size, RenderTextureFormat.ARGBHalf);
             coverage.filterMode = FilterMode.Point;
             coverageNext.filterMode = FilterMode.Point;
             Clear(Texture, fill);
+            Clear(Preview, fill);
+        }
+
+        public void RefreshPreview(Mesh mesh, int submesh)
+        {
+            Graphics.Blit(Dilate(mesh, submesh), Preview);
         }
 
         static RenderTexture CreateTexture(int size, RenderTextureFormat format)
@@ -350,6 +359,7 @@ namespace Malloc.ChannelPainter.Editor
             Release(coverageNext);
             Release(dilated);
             Release(dilationNext);
+            Release(Preview);
             UnityEngine.Object.DestroyImmediate(brushMaterial);
         }
     }

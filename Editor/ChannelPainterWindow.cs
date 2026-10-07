@@ -533,6 +533,7 @@ namespace Malloc.ChannelPainter.Editor
             Mesh mesh = SharedMesh();
             if (mesh == null)
                 return;
+            RefreshPreview();
             session = new PaintSession(target, slot, propertyName, output, canvas);
             if (dirtyFlag)
                 session.MarkDirty();
@@ -579,8 +580,16 @@ namespace Malloc.ChannelPainter.Editor
             return islandIds;
         }
 
+        void RefreshPreview()
+        {
+            Mesh mesh = SharedMesh();
+            if (canvas != null && mesh != null)
+                canvas.RefreshPreview(mesh, slot);
+        }
+
         void MarkDirty()
         {
+            RefreshPreview();
             SyncCanvasState();
             dirtyFlag = true;
             session?.MarkDirty();
@@ -1017,7 +1026,7 @@ namespace Malloc.ChannelPainter.Editor
                 return;
             if (!PaintMesh(out Mesh mesh, out Matrix4x4 matrix))
                 return;
-            viewMaterial.SetTexture("_MainTex", canvas.Texture);
+            viewMaterial.SetTexture("_MainTex", canvas.Preview);
             viewMaterial.SetInt("_ViewChannel", viewChannel);
             viewMaterial.SetFloat("_UseVertexColor", session.IsVertexColor ? 1 : 0);
             viewMaterial.SetMatrix("_MaskMatrix", matrix);
