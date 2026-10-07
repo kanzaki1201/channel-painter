@@ -369,10 +369,12 @@ namespace Malloc.ChannelPainter.Editor
         {
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Paint", EditorStyles.boldLabel);
-            using (new EditorGUI.DisabledScope(canvas == null || EditorApplication.isPlayingOrWillChangePlaymode))
+            using (new EditorGUI.DisabledScope(EditorApplication.isPlayingOrWillChangePlaymode))
                 if (GUILayout.Button(paint ? "Stop Painting" : "Start Painting", GUILayout.Height(28)))
                 {
-                    paint = !paint;
+                    if (!paint && canvas == null)
+                        CreateStartCanvas();
+                    paint = !paint && canvas != null;
                     hasHit = false;
                     if (!paint)
                         EndStroke();
@@ -490,6 +492,23 @@ namespace Malloc.ChannelPainter.Editor
             UpdateVertexColors(true);
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
+        }
+
+        // A domain reload drops a canvas without unsaved paint, so Start Painting rebuilds it from the target.
+        void CreateStartCanvas()
+        {
+            Texture assigned = PropertyTexture;
+            if (output == PaintOutput.Map && assigned != null)
+            {
+                EndSession();
+                canvas = new PaintCanvas(Sizes[sizeIndex], fill);
+                canvas.Load(assigned);
+                SyncCanvasState();
+                ClearDirty();
+                StartSession();
+            }
+            else
+                NewCanvas();
         }
 
         void Load(Texture texture)
