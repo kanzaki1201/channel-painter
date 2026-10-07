@@ -421,21 +421,30 @@ namespace Malloc.ChannelPainter.Editor
             EditorGUILayout.LabelField("Canvas", EditorStyles.boldLabel);
             sizeIndex = EditorGUILayout.Popup("Size", sizeIndex, SizeLabels);
             fill = EditorGUILayout.ColorField("Fill Color", fill);
-            if (GUILayout.Button("New"))
+            string newTooltip = output == PaintOutput.Map && PropertyTexture == null
+                ? "Start a canvas filled with Fill Color. The material has no " + propertyName + ", so this also saves the canvas as a new PNG and assigns it."
+                : "Start a canvas filled with Fill Color.";
+            if (GUILayout.Button(new GUIContent("New Canvas", newTooltip)))
                 ChangeSelection(NewCanvas);
-            using (new EditorGUI.DisabledScope(PropertyTexture == null))
-                if (GUILayout.Button("Load From Material"))
-                {
-                    Load(PropertyTexture);
-                    GUIUtility.ExitGUI();
-                }
-            loadTexture = (Texture)EditorGUILayout.ObjectField("Load Texture", loadTexture, typeof(Texture), false);
-            using (new EditorGUI.DisabledScope(loadTexture == null))
-                if (GUILayout.Button("Load"))
-                {
-                    Load(loadTexture);
-                    GUIUtility.ExitGUI();
-                }
+            if (output == PaintOutput.Map)
+                using (new EditorGUI.DisabledScope(PropertyTexture == null))
+                    if (GUILayout.Button(new GUIContent("Load " + propertyName + " From Material",
+                        "Replace the canvas with the map that the material holds in " + propertyName + ".")))
+                    {
+                        Load(PropertyTexture);
+                        GUIUtility.ExitGUI();
+                    }
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                loadTexture = (Texture)EditorGUILayout.ObjectField(
+                    new GUIContent("Other Texture", "Any texture to copy into the canvas."), loadTexture, typeof(Texture), false);
+                using (new EditorGUI.DisabledScope(loadTexture == null))
+                    if (GUILayout.Button("Load Into Canvas", GUILayout.Width(120)))
+                    {
+                        Load(loadTexture);
+                        GUIUtility.ExitGUI();
+                    }
+            }
             using (new EditorGUI.DisabledScope(canvas == null || !canvas.CanUndo))
                 if (GUILayout.Button("Undo"))
                 {
@@ -457,6 +466,8 @@ namespace Malloc.ChannelPainter.Editor
             SyncCanvasState();
             ClearDirty();
             StartSession();
+            if (output == PaintOutput.Map && PropertyTexture == null)
+                SaveMap(saveAs: true, forceAssign: true);
             UpdateVertexColors(true);
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
@@ -1062,7 +1073,7 @@ namespace Malloc.ChannelPainter.Editor
             return output == PaintOutput.Map ? SaveMap() : BakeVertexColor();
         }
 
-        bool SaveMap(bool saveAs = false)
+        bool SaveMap(bool saveAs = false, bool forceAssign = false)
         {
             if (canvas == null || !PaintMesh(out Mesh mesh, out _))
                 return false;
@@ -1070,8 +1081,8 @@ namespace Malloc.ChannelPainter.Editor
             string path = assigned == null ? null : AssetDatabase.GetAssetPath(assigned);
             if (saveAs || string.IsNullOrEmpty(path) ||
                 !path.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
-                path = EditorUtility.SaveFilePanelInProject("Save painted map", "ChannelPainter",
-                    "png", "Save the painted control map.");
+                path = EditorUtility.SaveFilePanelInProject("Save painted map",
+                    CurrentMaterial().name + propertyName, "png", "Save the painted control map.");
             if (string.IsNullOrEmpty(path))
                 return false;
 
@@ -1095,7 +1106,7 @@ namespace Malloc.ChannelPainter.Editor
             importer.maxTextureSize = Mathf.Max(importer.maxTextureSize, canvas.Texture.width);
             importer.SaveAndReimport();
 
-            if (assignToMaterial && !string.IsNullOrEmpty(propertyName))
+            if ((assignToMaterial || forceAssign) && !string.IsNullOrEmpty(propertyName))
             {
                 Material material = CurrentMaterial();
                 Undo.RecordObject(material, "Assign Channel Painter Map");
