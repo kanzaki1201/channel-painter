@@ -21,10 +21,11 @@ namespace Malloc.ChannelPainter.Editor
             if (original == null || mergedColors == null || mergedColors.Length != original.vertexCount)
                 return null;
 
+            // A native mesh asset under Assets/ can be written in place; an imported model (FBX) or a package mesh cannot.
             string path = AssetDatabase.GetAssetPath(original) ?? string.Empty;
-            bool writableCopy = path.EndsWith(".asset", StringComparison.OrdinalIgnoreCase)
-                && original.name.EndsWith("_ChannelPainter", StringComparison.Ordinal);
-            if (writableCopy)
+            bool writable = AssetDatabase.IsNativeAsset(original)
+                && path.StartsWith("Assets/", StringComparison.Ordinal);
+            if (writable)
             {
                 Undo.RecordObject(original, "Bake Channel Painter Vertex Color");
                 original.colors = mergedColors;
