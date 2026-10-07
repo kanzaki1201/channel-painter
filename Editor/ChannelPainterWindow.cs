@@ -39,6 +39,7 @@ namespace Malloc.ChannelPainter.Editor
         bool assignToMaterial = true;
         bool paint;
         bool hasHit;
+        bool strokeSnapshotTaken;
         Vector3 hitPoint;
         Vector3 hitNormal;
 
@@ -57,8 +58,10 @@ namespace Malloc.ChannelPainter.Editor
             if (target == null && Selection.activeGameObject != null)
             {
                 GameObject selected = Selection.activeGameObject;
-                SetTarget(selected.GetComponent<SkinnedMeshRenderer>() ??
-                    (Renderer)selected.GetComponent<MeshRenderer>());
+                if (selected.TryGetComponent(out SkinnedMeshRenderer skinned))
+                    SetTarget(skinned);
+                else if (selected.TryGetComponent(out MeshRenderer meshRenderer))
+                    SetTarget(meshRenderer);
             }
         }
 
@@ -229,7 +232,10 @@ namespace Malloc.ChannelPainter.Editor
                     Load(loadTexture);
             using (new EditorGUI.DisabledScope(canvas == null || !canvas.CanUndo))
                 if (GUILayout.Button("Undo"))
+                {
                     canvas.Undo();
+                    SceneView.RepaintAll();
+                }
         }
 
         void Load(Texture texture)
@@ -374,10 +380,15 @@ namespace Malloc.ChannelPainter.Editor
         {
             if (evt.button != 0)
                 return;
+            if (evt.type == EventType.MouseDown)
+                strokeSnapshotTaken = false;
             if (found)
             {
-                if (evt.type == EventType.MouseDown)
+                if (!strokeSnapshotTaken)
+                {
                     canvas.PushUndo();
+                    strokeSnapshotTaken = true;
+                }
                 canvas.Paint(mesh, matrix, slot, hit.point, radius, hardness, strength, value, ChannelMask);
                 SceneView.RepaintAll();
             }
@@ -401,6 +412,8 @@ namespace Malloc.ChannelPainter.Editor
             AssetDatabase.ImportAsset(path);
             var importer = (TextureImporter)AssetImporter.GetAtPath(path);
             importer.sRGBTexture = false;
+            importer.textureCompression = TextureImporterCompression.Uncompressed;
+            importer.maxTextureSize = Mathf.Max(importer.maxTextureSize, canvas.Texture.width);
             importer.SaveAndReimport();
 
             if (!assignToMaterial)

@@ -66,8 +66,11 @@ Shader "Hidden/ChannelPainter/Brush"
                 float falloff = _BrushHardness >= 1.0
                     ? step(distanceToBrush, _BrushRadius)
                     : 1.0 - smoothstep(inner, _BrushRadius, distanceToBrush);
+                float weight = saturate(_BrushStrength * falloff);
+                // Overlapping UV triangles would otherwise write source back over fresh paint.
+                clip(weight - 1e-5);
                 return lerp(source, float4(_BrushValue, _BrushValue, _BrushValue, _BrushValue),
-                    saturate(_BrushStrength * falloff) * _ChannelMask);
+                    weight * _ChannelMask);
             }
             ENDHLSL
         }
