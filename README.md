@@ -90,6 +90,7 @@ Or clone the repository into your project's `Packages/` folder.
 | Show Channel | Shows RGBA, or one channel as grayscale, in the UV window and the scene mask |
 | Show Mask In Scene View | Draws the selected channel unlit on the mesh |
 | Mask Source | Map output only. **Canvas** shows the paint. **Vertex Color** shows the mesh's existing vertex colors, with or without a canvas. |
+| Hide Mouse Cursor While Painting | Shows only the brush circle while the Brush tool paints. On by default. |
 | Open UV Window | Opens the 2D UV window |
 
 ### Save

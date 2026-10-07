@@ -65,6 +65,8 @@ namespace Malloc.ChannelPainter.Editor
             Rect viewport = new Rect(0, ToolbarHeight, position.width,
                 Mathf.Max(0, position.height - ToolbarHeight));
             Rect canvasRect = CanvasRect(viewport.size);
+            if (main.IsPainting)
+                main.ApplyPaintCursor(viewport);
             Event evt = Event.current;
 
             if (evt.type == EventType.Repaint)

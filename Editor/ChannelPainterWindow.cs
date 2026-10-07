@@ -48,6 +48,8 @@ namespace Malloc.ChannelPainter.Editor
         [SerializeField] BrushBlend blend;
         [SerializeField] bool pressureStrength = true;
         [SerializeField] bool pressureSize;
+        [SerializeField] bool hideCursor = true;
+        static Texture2D hiddenCursor;
         [SerializeField] bool red = true;
         [SerializeField] bool green = true;
         [SerializeField] bool blue = true;
@@ -145,11 +147,45 @@ namespace Malloc.ChannelPainter.Editor
         // A dark outline under the colored circle keeps it visible on light and dark backgrounds.
         internal static void DrawBrushCircle(Vector3 center, Vector3 normal, float radius, Color color)
         {
+            const int Segments = 64;
+            Vector3 tangent = Vector3.Cross(normal, Mathf.Abs(normal.y) < 0.99f ? Vector3.up : Vector3.right).normalized;
+            Vector3 bitangent = Vector3.Cross(normal, tangent);
+            var points = new Vector3[Segments + 1];
+            for (int i = 0; i <= Segments; i++)
+            {
+                float angle = i * Mathf.PI * 2 / Segments;
+                points[i] = center + (tangent * Mathf.Cos(angle) + bitangent * Mathf.Sin(angle)) * radius;
+            }
             Handles.color = new Color(0, 0, 0, 0.85f);
-            Handles.DrawWireDisc(center, normal, radius, 4f);
+            Handles.DrawAAPolyLine(4f, points);
             Handles.color = color;
-            Handles.DrawWireDisc(center, normal, radius, 2f);
+            Handles.DrawAAPolyLine(2f, points);
             Handles.color = Color.white;
+        }
+
+        // Only the Brush tool hides the cursor, because Fill Island draws no circle to aim with.
+        internal bool HidesCursor => paint && hideCursor && tool == PaintTool.Brush;
+
+        internal void ApplyPaintCursor(Rect rect)
+        {
+            if (HidesCursor)
+            {
+                if (hiddenCursor == null)
+                {
+                    hiddenCursor = new Texture2D(16, 16, TextureFormat.RGBA32, false) { hideFlags = HideFlags.HideAndDontSave };
+                    hiddenCursor.SetPixels32(new Color32[16 * 16]);
+                    hiddenCursor.Apply();
+                }
+                Cursor.SetCursor(hiddenCursor, Vector2.zero, CursorMode.Auto);
+                EditorGUIUtility.AddCursorRect(rect, MouseCursor.CustomCursor);
+            }
+            else
+                EditorGUIUtility.AddCursorRect(rect, MouseCursor.Arrow);
+        }
+
+        static void ResetCursor()
+        {
+            Cursor.SetCursor(null, Vector2.zero, CursorMode.Auto);
         }
 
         void SetBlend(BrushBlend next)
@@ -232,6 +268,7 @@ namespace Malloc.ChannelPainter.Editor
             EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
             Undo.undoRedoPerformed -= OnUndoRedo;
             ShortcutManager.UnregisterContext(ShortcutContext);
+            ResetCursor();
             if (!reloading && IsDirty)
                 WriteCanvasFile();
             EndSession();
@@ -475,7 +512,10 @@ namespace Malloc.ChannelPainter.Editor
                     paint = !paint && canvas != null;
                     hasHit = false;
                     if (!paint)
+                    {
                         EndStroke();
+                        ResetCursor();
+                    }
                     SceneView.RepaintAll();
                     ChannelPainterUVWindow.Active?.Repaint();
                     GUIUtility.ExitGUI();
@@ -679,6 +719,14 @@ namespace Malloc.ChannelPainter.Editor
                     maskVertexColor = nextSource == 1;
                     SceneView.RepaintAll();
                 }
+            }
+            bool nextHide = EditorGUILayout.Toggle(new GUIContent("Hide Mouse Cursor While Painting",
+                "Show only the brush circle while the Brush tool paints."), hideCursor);
+            if (nextHide != hideCursor)
+            {
+                hideCursor = nextHide;
+                ResetCursor();
+                SceneView.RepaintAll();
             }
             if (GUILayout.Button("Open UV Window"))
             {
@@ -969,6 +1017,9 @@ namespace Malloc.ChannelPainter.Editor
         {
             if (!paint || target == null || canvas == null || session == null)
                 return;
+            Handles.BeginGUI();
+            ApplyPaintCursor(new Rect(0, 0, view.position.width, view.position.height));
+            Handles.EndGUI();
             if (Event.current.type == EventType.Repaint)
                 DrawSceneStatus(view);
             if (tool == PaintTool.FillIsland)
