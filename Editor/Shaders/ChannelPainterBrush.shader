@@ -2,6 +2,8 @@ Shader "Hidden/ChannelPainter/Brush"
 {
     Properties
     {
+        // Graphics.Blit binds its source to the main texture, which the Blit passes read as _MainTex.
+        [MainTexture] _MainTex ("Blit Source", 2D) = "white" {}
         _Source ("Source", 2D) = "white" {}
     }
     SubShader
@@ -13,12 +15,13 @@ Shader "Hidden/ChannelPainter/Brush"
         Blend Off
 
         HLSLINCLUDE
-        #include "HLSLSupport.cginc"
+        #include "UnityCG.cginc"
 
         struct Attributes
         {
             float4 positionOS : POSITION;
             float2 uv : TEXCOORD0;
+            float4 color : COLOR;
         };
 
         struct Varyings
@@ -26,6 +29,7 @@ Shader "Hidden/ChannelPainter/Brush"
             float4 positionCS : SV_POSITION;
             float2 uv : TEXCOORD0;
             float3 positionWS : TEXCOORD1;
+            float4 color : COLOR;
         };
 
         float4x4 _BrushMatrix;
@@ -40,6 +44,7 @@ Shader "Hidden/ChannelPainter/Brush"
             output.positionCS = float4(clip, 0.0, 1.0);
             output.uv = input.uv;
             output.positionWS = mul(_BrushMatrix, input.positionOS).xyz;
+            output.color = input.color;
             return output;
         }
         ENDHLSL
@@ -57,11 +62,16 @@ Shader "Hidden/ChannelPainter/Brush"
             float _BrushStrength;
             float _BrushValue;
             float4 _ChannelMask;
+            float _BrushSpace;
+            float2 _BrushCenterUV;
+            float2 _CanvasSize;
 
             float4 Brush(Varyings input) : SV_Target
             {
                 float4 source = tex2D(_Source, input.uv);
-                float distanceToBrush = distance(input.positionWS, _BrushCenter);
+                float distanceToBrush = _BrushSpace > 0.5
+                    ? length((input.uv - _BrushCenterUV) * _CanvasSize)
+                    : distance(input.positionWS, _BrushCenter);
                 float inner = _BrushHardness * _BrushRadius;
                 float falloff = _BrushHardness >= 1.0
                     ? step(distanceToBrush, _BrushRadius)
@@ -84,6 +94,105 @@ Shader "Hidden/ChannelPainter/Brush"
             float4 Coverage(Varyings input) : SV_Target
             {
                 return float4(1.0, 0.0, 0.0, 1.0);
+            }
+            ENDHLSL
+        }
+
+        Pass
+        {
+            HLSLPROGRAM
+            #pragma vertex Vert
+            #pragma fragment VertexColors
+
+            float _HasVertexColor;
+
+            float4 VertexColors(Varyings input) : SV_Target
+            {
+                return _HasVertexColor > 0.5 ? input.color : float4(1.0, 1.0, 1.0, 1.0);
+            }
+            ENDHLSL
+        }
+
+        Pass
+        {
+            HLSLPROGRAM
+            #pragma vertex vert_img
+            #pragma fragment DilateColor
+
+            sampler2D _MainTex;
+            sampler2D _Coverage;
+            float4 _MainTex_TexelSize;
+
+            float4 DilateColor(v2f_img input) : SV_Target
+            {
+                float4 current = tex2D(_MainTex, input.uv);
+                if (tex2D(_Coverage, input.uv).r > 0.5)
+                    return current;
+
+                float4 sum = 0;
+                float count = 0;
+                for (int y = -1; y <= 1; y++)
+                for (int x = -1; x <= 1; x++)
+                {
+                    if (x == 0 && y == 0)
+                        continue;
+                    float2 neighbor = input.uv + float2(x, y) * _MainTex_TexelSize.xy;
+                    if (any(neighbor < 0.0) || any(neighbor > 1.0))
+                        continue;
+                    if (tex2D(_Coverage, neighbor).r <= 0.5)
+                        continue;
+                    sum += tex2D(_MainTex, neighbor);
+                    count += 1.0;
+                }
+                return count > 0.0 ? sum / count : current;
+            }
+            ENDHLSL
+        }
+
+        Pass
+        {
+            HLSLPROGRAM
+            #pragma vertex vert_img
+            #pragma fragment DilateCoverage
+
+            sampler2D _MainTex;
+            float4 _MainTex_TexelSize;
+
+            float4 DilateCoverage(v2f_img input) : SV_Target
+            {
+                if (tex2D(_MainTex, input.uv).r > 0.5)
+                    return 1.0;
+
+                for (int y = -1; y <= 1; y++)
+                for (int x = -1; x <= 1; x++)
+                {
+                    if (x == 0 && y == 0)
+                        continue;
+                    float2 neighbor = input.uv + float2(x, y) * _MainTex_TexelSize.xy;
+                    if (any(neighbor < 0.0) || any(neighbor > 1.0))
+                        continue;
+                    if (tex2D(_MainTex, neighbor).r > 0.5)
+                        return 1.0;
+                }
+                return 0.0;
+            }
+            ENDHLSL
+        }
+
+        Pass
+        {
+            HLSLPROGRAM
+            #pragma target 3.0
+            #pragma vertex vert_img
+            #pragma fragment SampleVertex
+
+            sampler2D _MainTex;
+            sampler2D _VertexUV;
+
+            float4 SampleVertex(v2f_img input) : SV_Target
+            {
+                float2 uv = tex2D(_VertexUV, input.uv).rg;
+                return tex2Dlod(_MainTex, float4(uv, 0.0, 0.0));
             }
             ENDHLSL
         }

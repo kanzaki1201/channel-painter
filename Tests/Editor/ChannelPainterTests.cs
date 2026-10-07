@@ -39,7 +39,7 @@ namespace Malloc.ChannelPainter.Editor
 
             try
             {
-                using (var canvas = new ChannelCanvas(64, Color.white))
+                using (var canvas = new PaintCanvas(64, Color.white))
                 {
                     canvas.Paint(quad, Matrix4x4.identity, 0, new Vector3(0.25f, 0.75f, 0),
                         0.15f, 0.5f, 1, 0, new Vector4(1, 0, 0, 0));
@@ -48,6 +48,90 @@ namespace Malloc.ChannelPainter.Editor
                     {
                         Assert.That(readback.GetPixelBilinear(0.25f, 0.75f).r, Is.LessThan(0.5f));
                         Assert.That(readback.GetPixelBilinear(0.25f, 0.25f).r, Is.GreaterThan(0.95f));
+                    }
+                    finally
+                    {
+                        Object.DestroyImmediate(readback);
+                    }
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(quad);
+            }
+        }
+
+        [Test]
+        public void GpuDilationExtendsPaintAtIslandEdge()
+        {
+            var quad = new Mesh
+            {
+                vertices = new[]
+                {
+                    new Vector3(0, 0, 0), new Vector3(1, 0, 0),
+                    new Vector3(1, 1, 0), new Vector3(0, 1, 0)
+                },
+                uv = new[]
+                {
+                    new Vector2(0, 0), new Vector2(0.5f, 0),
+                    new Vector2(0.5f, 1), new Vector2(0, 1)
+                },
+                triangles = new[] { 0, 1, 2, 0, 2, 3 }
+            };
+
+            try
+            {
+                using (var canvas = new PaintCanvas(64, Color.black))
+                {
+                    canvas.Paint(quad, Matrix4x4.identity, 0, new Vector3(0.5f, 0.5f, 0),
+                        2, 1, 1, 1, new Vector4(1, 0, 0, 0));
+                    Texture2D readback = canvas.ReadbackDilated(quad, 0);
+                    try
+                    {
+                        Assert.That(readback.GetPixelBilinear(0.53f, 0.5f).r, Is.GreaterThan(0.9f));
+                        Assert.That(readback.GetPixelBilinear(0.8f, 0.5f).r, Is.LessThan(0.1f));
+                    }
+                    finally
+                    {
+                        Object.DestroyImmediate(readback);
+                    }
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(quad);
+            }
+        }
+
+        [Test]
+        public void UvBrushUsesTexelRadius()
+        {
+            var quad = new Mesh
+            {
+                vertices = new[]
+                {
+                    new Vector3(0, 0, 0), new Vector3(1, 0, 0),
+                    new Vector3(1, 1, 0), new Vector3(0, 1, 0)
+                },
+                uv = new[]
+                {
+                    new Vector2(0, 0), new Vector2(1, 0),
+                    new Vector2(1, 1), new Vector2(0, 1)
+                },
+                triangles = new[] { 0, 1, 2, 0, 2, 3 }
+            };
+
+            try
+            {
+                using (var canvas = new PaintCanvas(64, Color.white))
+                {
+                    canvas.PaintUV(quad, 0, new Vector2(0.25f, 0.75f), 4, 1, 1, 0,
+                        new Vector4(1, 0, 0, 0));
+                    Texture2D readback = canvas.ReadbackDilated(quad, 0);
+                    try
+                    {
+                        Assert.That(readback.GetPixelBilinear(0.25f, 0.75f).r, Is.LessThan(0.1f));
+                        Assert.That(readback.GetPixelBilinear(0.25f, 0.25f).r, Is.GreaterThan(0.9f));
                     }
                     finally
                     {

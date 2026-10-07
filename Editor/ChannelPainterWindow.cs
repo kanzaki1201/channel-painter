@@ -13,41 +13,79 @@ namespace Malloc.ChannelPainter.Editor
     {
         static readonly int[] Sizes = { 512, 1024, 2048, 4096 };
         static readonly string[] SizeLabels = { "512", "1024", "2048", "4096" };
+        static readonly string[] OutputLabels = { "Map", "Vertex color" };
+        static readonly string[] ViewLabels = { "RGBA", "R", "G", "B", "A" };
         const float MinRadius = 0.001f;
         const float MaxRadius = 1f;
+        const string ReloadPath = "Temp/ChannelPainter/canvas.raw";
         static readonly MethodInfo IntersectRayMesh = typeof(HandleUtility).GetMethod(
             "IntersectRayMesh", BindingFlags.Static | BindingFlags.NonPublic, null,
             new[] { typeof(Ray), typeof(Mesh), typeof(Matrix4x4), typeof(RaycastHit).MakeByRefType() }, null);
         static bool reportedRayError;
 
-        Renderer target;
-        Renderer previewRenderer;
-        MaterialPropertyBlock previousBlock;
+        [SerializeField] Renderer target;
+        [SerializeField] string propertyName;
+        [SerializeField] int slot;
+        [SerializeField] int sizeIndex = 1;
+        [SerializeField] int canvasSize;
+        [SerializeField] Color fill = Color.white;
+        [SerializeField] float value = 1;
+        [SerializeField] float radius = 0.1f;
+        [SerializeField] float hardness = 0.5f;
+        [SerializeField] float strength = 1;
+        [SerializeField] bool red = true;
+        [SerializeField] bool green = true;
+        [SerializeField] bool blue = true;
+        [SerializeField] bool alpha = true;
+        [SerializeField] bool assignToMaterial = true;
+        [SerializeField] bool paint;
+        [SerializeField] bool showMask;
+        [SerializeField] bool dirtyFlag;
+        [SerializeField] int viewChannel;
+        [SerializeField] PaintOutput output;
+        [SerializeField] Vector4 reloadChannels;
+        [SerializeField] Texture loadTexture;
+
+        PaintCanvas canvas;
+        PaintSession session;
+        Material viewMaterial;
         Mesh posedMesh;
-        ChannelCanvas canvas;
-        Texture loadTexture;
-        string propertyName;
-        int previewSlot;
-        int slot;
-        int sizeIndex = 1;
-        Color fill = Color.white;
-        float value = 1;
-        float radius = 0.1f;
-        float hardness = 0.5f;
-        float strength = 1;
-        bool red = true;
-        bool green = true;
-        bool blue = true;
-        bool alpha = true;
-        bool assignToMaterial = true;
-        bool paint;
+        Mesh cachedHitMesh;
+        int[] cachedTriangles;
+        Vector2[] cachedUV;
         bool hasHit;
+        bool hasHoverUV;
         bool strokeSnapshotTaken;
+        bool reloading;
+        double lastVertexUpdate;
         Vector3 hitPoint;
         Vector3 hitNormal;
+        Vector2 hoverUV;
+
+        internal static ChannelPainterWindow Active { get; private set; }
+        internal PaintCanvas Canvas => canvas;
+        internal Mesh TargetMesh => target == null ? null : session != null ? session.OriginalMesh : SharedMesh();
+        internal int TargetSlot => slot;
+        internal bool HasHoverUV => hasHoverUV;
+        internal Vector2 HoverUV => hoverUV;
+        internal Material ViewMaterial => viewMaterial;
+        internal int ViewChannel
+        {
+            get => viewChannel;
+            set
+            {
+                if (viewChannel == value)
+                    return;
+                viewChannel = value;
+                Repaint();
+                SceneView.RepaintAll();
+                ChannelPainterUVWindow.Active?.Repaint();
+            }
+        }
 
         Vector4 ChannelMask => new Vector4(red ? 1 : 0, green ? 1 : 0,
             blue ? 1 : 0, alpha ? 1 : 0);
+        bool IsDirty => session != null ? session.Dirty : dirtyFlag;
 
         [MenuItem("Tools/Channel Painter")]
         static void Open()
@@ -57,7 +95,14 @@ namespace Malloc.ChannelPainter.Editor
 
         void OnEnable()
         {
+            Active = this;
             SceneView.duringSceneGui += OnSceneGUI;
+            RenderPipelineManager.beginCameraRendering += OnBeginCameraRendering;
+            AssemblyReloadEvents.beforeAssemblyReload += BeforeAssemblyReload;
+            EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+            Shader shader = Shader.Find("Hidden/ChannelPainter/View");
+            if (shader != null)
+                viewMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
             if (target == null && Selection.activeGameObject != null)
             {
                 GameObject selected = Selection.activeGameObject;
@@ -66,23 +111,45 @@ namespace Malloc.ChannelPainter.Editor
                 else if (selected.TryGetComponent(out MeshRenderer meshRenderer))
                     SetTarget(meshRenderer);
             }
+            RestoreAfterReload();
+            UpdateUnsavedState();
         }
 
         void OnDisable()
         {
             SceneView.duringSceneGui -= OnSceneGUI;
-            ClearPreview();
+            RenderPipelineManager.beginCameraRendering -= OnBeginCameraRendering;
+            AssemblyReloadEvents.beforeAssemblyReload -= BeforeAssemblyReload;
+            EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+            EndSession();
             ReleaseCanvas();
             if (posedMesh != null)
                 DestroyImmediate(posedMesh);
             posedMesh = null;
+            if (viewMaterial != null)
+                DestroyImmediate(viewMaterial);
+            viewMaterial = null;
+            if (Active == this)
+                Active = null;
+        }
+
+        void OnDestroy()
+        {
+            if (!reloading && File.Exists(ReloadPath))
+                File.Delete(ReloadPath);
+        }
+
+        public override void SaveChanges()
+        {
+            if (SaveCurrentOutput())
+                base.SaveChanges();
         }
 
         void OnGUI()
         {
             Renderer chosen = (Renderer)EditorGUILayout.ObjectField("Target", target, typeof(Renderer), true);
             if (chosen != target)
-                SetTarget(chosen);
+                ChangeSelection(() => SetTarget(chosen));
             if (target == null)
             {
                 EditorGUILayout.HelpBox("Choose a MeshRenderer with a MeshFilter or a SkinnedMeshRenderer.", MessageType.Info);
@@ -90,7 +157,7 @@ namespace Malloc.ChannelPainter.Editor
             }
 
             DrawTargetSettings();
-            Mesh mesh = SharedMesh();
+            Mesh mesh = TargetMesh;
             if (mesh == null || mesh.uv.Length != mesh.vertexCount ||
                 CurrentMaterial() == null || string.IsNullOrEmpty(propertyName))
                 return;
@@ -98,17 +165,39 @@ namespace Malloc.ChannelPainter.Editor
             DrawBrushSettings();
             DrawCanvasSettings();
             DrawOutputSettings();
-            using (new EditorGUI.DisabledScope(canvas == null))
+            using (new EditorGUI.DisabledScope(canvas == null || EditorApplication.isPlayingOrWillChangePlaymode))
                 paint = EditorGUILayout.Toggle("Paint", paint);
+            if (session != null && session.IsVertexColor)
+                EditorGUILayout.HelpBox("End the Vertex color session before Apply Overrides or dragging this object into the Project window.", MessageType.Warning);
+        }
+
+        void ChangeSelection(Action change)
+        {
+            if (ConfirmSessionEnd())
+                change();
+            GUIUtility.ExitGUI();
+        }
+
+        bool ConfirmSessionEnd()
+        {
+            if (!IsDirty)
+                return true;
+            int choice = EditorUtility.DisplayDialogComplex("Unsaved Channel Painter paint",
+                "Save the current paint before ending this session?", "Save", "Cancel", "Discard");
+            if (choice == 1)
+                return false;
+            if (choice == 0 && !SaveCurrentOutput())
+                return false;
+            if (choice == 2)
+                ClearDirty();
+            return true;
         }
 
         void SetTarget(Renderer chosen)
         {
-            ClearPreview();
+            EndSession();
             ReleaseCanvas();
-            if (posedMesh != null)
-                DestroyImmediate(posedMesh);
-            posedMesh = null;
+            ReleasePose();
             target = chosen is SkinnedMeshRenderer ||
                 (chosen is MeshRenderer && chosen.GetComponent<MeshFilter>() != null)
                 ? chosen : null;
@@ -116,13 +205,21 @@ namespace Malloc.ChannelPainter.Editor
             propertyName = null;
             paint = false;
             hasHit = false;
+            hasHoverUV = false;
+            ClearDirty();
             Repaint();
         }
 
         Mesh SharedMesh()
         {
-            return target is SkinnedMeshRenderer skinned
-                ? skinned.sharedMesh : target.GetComponent<MeshFilter>().sharedMesh;
+            if (target is SkinnedMeshRenderer skinned)
+                return skinned.sharedMesh;
+            if (target is MeshRenderer renderer)
+            {
+                MeshFilter filter = renderer.GetComponent<MeshFilter>();
+                return filter != null ? filter.sharedMesh : null;
+            }
+            return null;
         }
 
         Material CurrentMaterial()
@@ -130,12 +227,12 @@ namespace Malloc.ChannelPainter.Editor
             if (target == null)
                 return null;
             Material[] materials = target.sharedMaterials;
-            return slot < materials.Length ? materials[slot] : null;
+            return slot >= 0 && slot < materials.Length ? materials[slot] : null;
         }
 
         void DrawTargetSettings()
         {
-            Mesh mesh = SharedMesh();
+            Mesh mesh = TargetMesh;
             int count = mesh == null ? 0 : Mathf.Min(mesh.subMeshCount, target.sharedMaterials.Length);
             if (count == 0)
             {
@@ -148,14 +245,17 @@ namespace Malloc.ChannelPainter.Editor
                 labels[i] = i + ": " + (target.sharedMaterials[i] == null ? "None" : target.sharedMaterials[i].name);
             int chosen = EditorGUILayout.Popup("Material Slot", Mathf.Clamp(slot, 0, count - 1), labels);
             if (chosen != slot)
-            {
-                ClearPreview();
-                ReleaseCanvas();
-                slot = chosen;
-                propertyName = null;
-                paint = false;
-                hasHit = false;
-            }
+                ChangeSelection(() =>
+                {
+                    EndSession();
+                    ReleaseCanvas();
+                    slot = chosen;
+                    propertyName = null;
+                    paint = false;
+                    hasHit = false;
+                    hasHoverUV = false;
+                    ClearDirty();
+                });
 
             Material material = CurrentMaterial();
             if (material == null)
@@ -168,19 +268,21 @@ namespace Malloc.ChannelPainter.Editor
             if (properties.Length == 0)
             {
                 EditorGUILayout.HelpBox("This shader has no texture properties.", MessageType.Error);
-                ClearPreview();
-                propertyName = null;
                 return;
             }
             int index = Array.IndexOf(properties, propertyName);
             int next = EditorGUILayout.Popup("Texture Property", Mathf.Max(index, 0), properties);
             string chosenProperty = properties[next];
             if (chosenProperty != propertyName)
-            {
-                ClearPreview();
-                propertyName = chosenProperty;
-                ApplyPreview();
-            }
+                ChangeSelection(() =>
+                {
+                    EndSession();
+                    ReleaseCanvas();
+                    propertyName = chosenProperty;
+                    paint = false;
+                    ClearDirty();
+                });
+
             string keyword = KeywordFor(material.shader, propertyName);
             if (keyword != null && !material.IsKeywordEnabled(keyword))
             {
@@ -190,11 +292,10 @@ namespace Malloc.ChannelPainter.Editor
             }
             else if (keyword == null && material.GetTexture(propertyName) == null)
                 EditorGUILayout.HelpBox("This property has no texture. Assign one in the material inspector if the shader needs a keyword to use it.", MessageType.Warning);
-            if (mesh.uv == null || mesh.uv.Length != mesh.vertexCount)
+            if (mesh.uv.Length != mesh.vertexCount)
                 EditorGUILayout.HelpBox("The target mesh has no UV0.", MessageType.Error);
         }
 
-        // ponytail: name match (_OutlineMap -> *_OUTLINE_MAP); add a per-shader table if a shader breaks the convention.
         static string KeywordFor(Shader shader, string property)
         {
             string snake = "_" + Regex.Replace(property.TrimStart('_'), "(?<=[a-z0-9])(?=[A-Z])", "_").ToUpperInvariant();
@@ -248,12 +349,7 @@ namespace Malloc.ChannelPainter.Editor
             sizeIndex = EditorGUILayout.Popup("Size", sizeIndex, SizeLabels);
             fill = EditorGUILayout.ColorField("Fill Color", fill);
             if (GUILayout.Button("New"))
-            {
-                ClearPreview();
-                ReleaseCanvas();
-                canvas = new ChannelCanvas(Sizes[sizeIndex], fill);
-                ApplyPreview();
-            }
+                ChangeSelection(NewCanvas);
             using (new EditorGUI.DisabledScope(CurrentMaterial().GetTexture(propertyName) == null))
                 if (GUILayout.Button("Load From Material"))
                     Load(CurrentMaterial().GetTexture(propertyName));
@@ -265,23 +361,59 @@ namespace Malloc.ChannelPainter.Editor
                 if (GUILayout.Button("Undo"))
                 {
                     canvas.Undo();
+                    MarkDirty();
+                    UpdateVertexColors(true);
                     SceneView.RepaintAll();
+                    ChannelPainterUVWindow.Active?.Repaint();
                 }
+        }
+
+        void NewCanvas()
+        {
+            EndSession();
+            ReleaseCanvas();
+            canvas = new PaintCanvas(Sizes[sizeIndex], fill);
+            if (output == PaintOutput.VertexColor)
+                canvas.LoadVertexColors(SharedMesh(), slot);
+            SyncCanvasState();
+            ClearDirty();
+            StartSession();
+            UpdateVertexColors(true);
+            SceneView.RepaintAll();
+            ChannelPainterUVWindow.Active?.Repaint();
         }
 
         void Load(Texture texture)
         {
             if (canvas == null)
-                canvas = new ChannelCanvas(Sizes[sizeIndex], fill);
+            {
+                canvas = new PaintCanvas(Sizes[sizeIndex], fill);
+            }
             canvas.Load(texture);
-            ApplyPreview();
+            SyncCanvasState();
+            StartSession();
+            MarkDirty();
+            UpdateVertexColors(true);
             SceneView.RepaintAll();
+            ChannelPainterUVWindow.Active?.Repaint();
         }
 
         void DrawOutputSettings()
         {
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Output", EditorStyles.boldLabel);
+            PaintOutput chosen = (PaintOutput)EditorGUILayout.Popup("Output", (int)output, OutputLabels);
+            if (chosen != output)
+                ChangeSelection(() => SwitchOutput(chosen));
+            ViewChannel = EditorGUILayout.Popup("View", viewChannel, ViewLabels);
+            bool nextShowMask = EditorGUILayout.Toggle("Show mask", showMask);
+            if (nextShowMask != showMask)
+            {
+                showMask = nextShowMask;
+                SceneView.RepaintAll();
+            }
+            if (GUILayout.Button("Open UV Window"))
+                ChannelPainterUVWindow.Open();
             assignToMaterial = EditorGUILayout.Toggle("Assign to material", assignToMaterial);
             using (new EditorGUI.DisabledScope(canvas == null))
             {
@@ -292,40 +424,169 @@ namespace Malloc.ChannelPainter.Editor
             }
         }
 
+        void SwitchOutput(PaintOutput chosen)
+        {
+            EndSession();
+            output = chosen;
+            ClearDirty();
+            if (output == PaintOutput.VertexColor)
+            {
+                if (canvas == null)
+                    canvas = new PaintCanvas(Sizes[sizeIndex], fill);
+                canvas.LoadVertexColors(SharedMesh(), slot);
+            }
+            SyncCanvasState();
+            StartSession();
+            UpdateVertexColors(true);
+            SceneView.RepaintAll();
+            ChannelPainterUVWindow.Active?.Repaint();
+        }
+
+        void StartSession()
+        {
+            if (session != null || canvas == null || target == null || string.IsNullOrEmpty(propertyName) ||
+                EditorApplication.isPlayingOrWillChangePlaymode)
+                return;
+            Mesh mesh = SharedMesh();
+            if (mesh == null)
+                return;
+            session = new PaintSession(target, slot, propertyName, output, canvas);
+            if (dirtyFlag)
+                session.MarkDirty();
+        }
+
+        void EndSession()
+        {
+            session?.End();
+            session = null;
+        }
+
         void ReleaseCanvas()
         {
             canvas?.Dispose();
             canvas = null;
         }
 
-        void ClearPreview()
+        void ReleasePose()
         {
-            if (previewRenderer != null)
-                previewRenderer.SetPropertyBlock(previousBlock != null && !previousBlock.isEmpty
-                    ? previousBlock : null, previewSlot);
-            previewRenderer = null;
-            previousBlock = null;
+            if (posedMesh != null)
+                DestroyImmediate(posedMesh);
+            posedMesh = null;
+            cachedHitMesh = null;
+            cachedTriangles = null;
+            cachedUV = null;
         }
 
-        void ApplyPreview()
+        void MarkDirty()
         {
-            if (canvas == null || target == null || string.IsNullOrEmpty(propertyName))
+            SyncCanvasState();
+            dirtyFlag = true;
+            session?.MarkDirty();
+            UpdateUnsavedState();
+        }
+
+        void ClearDirty()
+        {
+            dirtyFlag = false;
+            session?.ClearDirty();
+            UpdateUnsavedState();
+        }
+
+        void UpdateUnsavedState()
+        {
+            hasUnsavedChanges = IsDirty;
+            saveChangesMessage = "Save the Channel Painter paint before closing?";
+        }
+
+        void SyncCanvasState()
+        {
+            if (canvas == null)
                 return;
-            if (previewRenderer == null)
+            canvasSize = canvas.Texture.width;
+            reloadChannels = canvas.PaintedChannels;
+        }
+
+        void OnPlayModeStateChanged(PlayModeStateChange state)
+        {
+            if (state == PlayModeStateChange.ExitingEditMode)
+                EndSession();
+            else if (state == PlayModeStateChange.EnteredEditMode)
             {
-                previewRenderer = target;
-                previewSlot = slot;
-                previousBlock = new MaterialPropertyBlock();
-                target.GetPropertyBlock(previousBlock, slot);
+                StartSession();
+                UpdateVertexColors(true);
             }
-            var block = new MaterialPropertyBlock();
-            target.GetPropertyBlock(block, slot);
-            block.SetTexture(propertyName, canvas.Texture);
-            target.SetPropertyBlock(block, slot);
+        }
+
+        void BeforeAssemblyReload()
+        {
+            reloading = true;
+            try
+            {
+                if (canvas != null && target != null)
+                {
+                    SyncCanvasState();
+                    var raw = new Texture2D(canvasSize, canvasSize, TextureFormat.RGBAHalf, false, true);
+                    RenderTexture previous = RenderTexture.active;
+                    try
+                    {
+                        RenderTexture.active = canvas.Texture;
+                        raw.ReadPixels(new Rect(0, 0, canvasSize, canvasSize), 0, 0, false);
+                        raw.Apply(false, false);
+                        Directory.CreateDirectory(Path.GetDirectoryName(ReloadPath));
+                        File.WriteAllBytes(ReloadPath, raw.GetRawTextureData<byte>().ToArray());
+                    }
+                    finally
+                    {
+                        RenderTexture.active = previous;
+                        DestroyImmediate(raw);
+                    }
+                }
+            }
+            finally
+            {
+                EndSession();
+            }
+        }
+
+        void RestoreAfterReload()
+        {
+            if (!File.Exists(ReloadPath) || target == null || canvasSize <= 0)
+                return;
+            try
+            {
+                byte[] bytes = File.ReadAllBytes(ReloadPath);
+                if (bytes.Length != canvasSize * canvasSize * 8)
+                    return;
+                var raw = new Texture2D(canvasSize, canvasSize, TextureFormat.RGBAHalf, false, true);
+                try
+                {
+                    raw.LoadRawTextureData(bytes);
+                    raw.Apply(false, false);
+                    canvas = new PaintCanvas(canvasSize, fill);
+                    canvas.RestoreRaw(raw);
+                    canvas.RestorePaintedChannels(reloadChannels);
+                }
+                finally
+                {
+                    DestroyImmediate(raw);
+                }
+                StartSession();
+                UpdateVertexColors(true);
+            }
+            finally
+            {
+                File.Delete(ReloadPath);
+            }
         }
 
         bool PaintMesh(out Mesh mesh, out Matrix4x4 matrix)
         {
+            if (target == null)
+            {
+                mesh = null;
+                matrix = Matrix4x4.identity;
+                return false;
+            }
             mesh = SharedMesh();
             matrix = target.localToWorldMatrix;
             if (mesh == null)
@@ -374,47 +635,97 @@ namespace Malloc.ChannelPainter.Editor
 
         void OnSceneGUI(SceneView view)
         {
-            if (!paint || target == null || canvas == null)
+            if (!paint || target == null || canvas == null || session == null)
                 return;
             Event evt = Event.current;
+            if (HandleSceneMouseUp(evt))
+                return;
             if (evt.alt)
                 return;
             HandleUtility.AddDefaultControl(GUIUtility.GetControlID(FocusType.Passive));
-            if (evt.type == EventType.KeyDown &&
-                (evt.keyCode == KeyCode.LeftBracket || evt.keyCode == KeyCode.RightBracket))
-            {
-                float step = evt.keyCode == KeyCode.RightBracket ? 1.15f : 1 / 1.15f;
-                radius = Mathf.Clamp(radius * step, MinRadius, MaxRadius);
-                evt.Use();
-                Repaint();
-                view.Repaint();
+            if (HandleSceneKey(evt, view))
                 return;
-            }
             if (evt.type == EventType.Repaint && hasHit)
                 Handles.DrawWireDisc(hitPoint, hitNormal, radius);
             if (evt.type != EventType.MouseMove && evt.type != EventType.MouseDown &&
                 evt.type != EventType.MouseDrag)
                 return;
-            if (!PaintMesh(out Mesh mesh, out Matrix4x4 matrix))
-            {
-                hasHit = false;
+            if (!UpdateSceneHit(evt, out Mesh mesh, out Matrix4x4 matrix, out RaycastHit hit))
                 return;
-            }
-
-            bool found = RayHit(HandleUtility.GUIPointToWorldRay(evt.mousePosition), mesh, matrix,
-                out RaycastHit hit);
-            hasHit = found;
-            if (found)
-            {
-                hitPoint = hit.point;
-                hitNormal = hit.normal;
-            }
             if (evt.type == EventType.MouseMove)
             {
                 view.Repaint();
                 return;
             }
-            ApplyStroke(evt, found, hit, mesh, matrix);
+            ApplyStroke(evt, hasHit, hit, mesh, matrix);
+        }
+
+        bool HandleSceneMouseUp(Event evt)
+        {
+            if (evt.type != EventType.MouseUp || evt.button != 0)
+                return false;
+            EndStroke();
+            evt.Use();
+            return true;
+        }
+
+        bool HandleSceneKey(Event evt, SceneView view)
+        {
+            if (evt.type != EventType.KeyDown ||
+                (evt.keyCode != KeyCode.LeftBracket && evt.keyCode != KeyCode.RightBracket))
+                return false;
+            float step = evt.keyCode == KeyCode.RightBracket ? 1.15f : 1 / 1.15f;
+            radius = Mathf.Clamp(radius * step, MinRadius, MaxRadius);
+            evt.Use();
+            Repaint();
+            view.Repaint();
+            return true;
+        }
+
+        bool UpdateSceneHit(Event evt, out Mesh mesh, out Matrix4x4 matrix, out RaycastHit hit)
+        {
+            hit = default;
+            if (!PaintMesh(out mesh, out matrix))
+            {
+                hasHit = false;
+                hasHoverUV = false;
+                return false;
+            }
+            hasHit = RayHit(HandleUtility.GUIPointToWorldRay(evt.mousePosition), mesh, matrix, out hit);
+            if (hasHit)
+            {
+                hitPoint = hit.point;
+                hitNormal = hit.normal;
+            }
+            UpdateHoverUV(hasHit, hit);
+            return true;
+        }
+
+        void UpdateHoverUV(bool found, RaycastHit hit)
+        {
+            hasHoverUV = false;
+            Mesh mesh = TargetMesh;
+            if (found && mesh != null && slot < mesh.subMeshCount)
+            {
+                if (cachedHitMesh != mesh)
+                {
+                    cachedHitMesh = mesh;
+                    cachedTriangles = mesh.triangles;
+                    cachedUV = mesh.uv;
+                }
+                SubMeshDescriptor submesh = mesh.GetSubMesh(slot);
+                int first = hit.triangleIndex * 3;
+                if (first >= submesh.indexStart && first + 2 < submesh.indexStart + submesh.indexCount &&
+                    first + 2 < cachedTriangles.Length)
+                {
+                    Vector3 bary = hit.barycentricCoordinate;
+                    hoverUV = cachedUV[cachedTriangles[first]] * bary.x +
+                        cachedUV[cachedTriangles[first + 1]] * bary.y +
+                        cachedUV[cachedTriangles[first + 2]] * bary.z;
+                    hasHoverUV = true;
+                }
+            }
+            ChannelPainterUVWindow.Active?.Repaint();
         }
 
         void ApplyStroke(Event evt, bool found, RaycastHit hit, Mesh mesh, Matrix4x4 matrix)
@@ -431,25 +742,100 @@ namespace Malloc.ChannelPainter.Editor
                     strokeSnapshotTaken = true;
                 }
                 canvas.Paint(mesh, matrix, slot, hit.point, radius, hardness, strength, value, ChannelMask);
+                MarkDirty();
+                UpdateVertexColors(false);
                 SceneView.RepaintAll();
+                ChannelPainterUVWindow.Active?.Repaint();
             }
             evt.Use();
         }
 
-        void SaveMap()
+        internal void PaintUV(Vector2 uv, float radiusPixels, bool beginStroke)
         {
+            if (canvas == null || session == null || TargetMesh == null)
+                return;
+            if (beginStroke)
+                strokeSnapshotTaken = false;
+            if (!strokeSnapshotTaken)
+            {
+                canvas.PushUndo();
+                strokeSnapshotTaken = true;
+            }
+            canvas.PaintUV(TargetMesh, slot, uv, radiusPixels, hardness, strength, value, ChannelMask);
+            MarkDirty();
+            UpdateVertexColors(false);
+            SceneView.RepaintAll();
+            ChannelPainterUVWindow.Active?.Repaint();
+        }
+
+        internal void EndUVStroke()
+        {
+            EndStroke();
+        }
+
+        void EndStroke()
+        {
+            if (strokeSnapshotTaken)
+                UpdateVertexColors(true);
+            strokeSnapshotTaken = false;
+            SceneView.RepaintAll();
+            ChannelPainterUVWindow.Active?.Repaint();
+        }
+
+        void UpdateVertexColors(bool force)
+        {
+            if (session == null || !session.IsVertexColor || canvas == null)
+                return;
+            double now = EditorApplication.timeSinceStartup;
+            if (!force && now - lastVertexUpdate < 0.1)
+                return;
+            if (!PaintMesh(out Mesh coverageMesh, out _))
+                return;
+            session.SetColors(canvas.SampleVertices(session.OriginalMesh, coverageMesh, slot));
+            lastVertexUpdate = now;
+        }
+
+        void OnBeginCameraRendering(ScriptableRenderContext context, Camera camera)
+        {
+            if (!showMask || camera.cameraType != CameraType.SceneView || viewMaterial == null ||
+                canvas == null || session == null || target == null)
+                return;
+            if (!PaintMesh(out Mesh mesh, out Matrix4x4 matrix))
+                return;
+            viewMaterial.SetTexture("_MainTex", canvas.Texture);
+            viewMaterial.SetInt("_ViewChannel", viewChannel);
+            viewMaterial.SetFloat("_UseVertexColor", session.IsVertexColor ? 1 : 0);
+            viewMaterial.SetMatrix("_MaskMatrix", matrix);
+            Graphics.DrawMesh(mesh, matrix, viewMaterial, 0, camera, slot);
+        }
+
+        bool SaveCurrentOutput()
+        {
+            return output == PaintOutput.Map ? SaveMap() : BakeVertexColor();
+        }
+
+        bool SaveMap()
+        {
+            if (canvas == null || !PaintMesh(out Mesh mesh, out _))
+                return false;
             string path = EditorUtility.SaveFilePanelInProject("Save painted map", "ChannelPainter",
                 "png", "Save the painted control map.");
-            if (string.IsNullOrEmpty(path) || !PaintMesh(out Mesh mesh, out _))
-                return;
+            if (string.IsNullOrEmpty(path))
+                return false;
 
             Texture2D painted = canvas.ReadbackDilated(mesh, slot);
             var png = new Texture2D(painted.width, painted.height, TextureFormat.RGBA32, false, true);
-            png.SetPixels(painted.GetPixels());
-            png.Apply(false, false);
-            File.WriteAllBytes(path, png.EncodeToPNG());
-            DestroyImmediate(png);
-            DestroyImmediate(painted);
+            try
+            {
+                png.SetPixels(painted.GetPixels());
+                png.Apply(false, false);
+                File.WriteAllBytes(path, png.EncodeToPNG());
+            }
+            finally
+            {
+                DestroyImmediate(png);
+                DestroyImmediate(painted);
+            }
             AssetDatabase.ImportAsset(path);
             var importer = (TextureImporter)AssetImporter.GetAtPath(path);
             importer.sRGBTexture = false;
@@ -457,21 +843,37 @@ namespace Malloc.ChannelPainter.Editor
             importer.maxTextureSize = Mathf.Max(importer.maxTextureSize, canvas.Texture.width);
             importer.SaveAndReimport();
 
-            if (!assignToMaterial)
-                return;
-            Material material = CurrentMaterial();
-            Undo.RecordObject(material, "Assign Channel Painter Map");
-            material.SetTexture(propertyName, AssetDatabase.LoadAssetAtPath<Texture2D>(path));
-            string keyword = KeywordFor(material.shader, propertyName);
-            if (keyword != null)
-                material.EnableKeyword(keyword);
-            EditorUtility.SetDirty(material);
+            if (assignToMaterial)
+            {
+                Material material = CurrentMaterial();
+                Undo.RecordObject(material, "Assign Channel Painter Map");
+                material.SetTexture(propertyName, AssetDatabase.LoadAssetAtPath<Texture2D>(path));
+                string keyword = KeywordFor(material.shader, propertyName);
+                if (keyword != null)
+                    material.EnableKeyword(keyword);
+                EditorUtility.SetDirty(material);
+            }
+            if (output == PaintOutput.Map)
+                ClearDirty();
+            return true;
         }
 
-        void BakeVertexColor()
+        bool BakeVertexColor()
         {
-            if (PaintMesh(out Mesh mesh, out _))
-                VertexColorBake.Bake(target, slot, canvas, ChannelMask, mesh);
+            if (canvas == null || !PaintMesh(out Mesh mesh, out _))
+                return false;
+            StartSession();
+            if (session == null)
+                return false;
+            Color[] colors = canvas.SampleVertices(session.OriginalMesh, mesh, slot);
+            Mesh baked = VertexColorBake.Bake(session.OriginalMesh, colors);
+            if (baked == null)
+                return false;
+            session.AssignBakedMesh(baked);
+            if (output == PaintOutput.VertexColor)
+                ClearDirty();
+            SceneView.RepaintAll();
+            return true;
         }
     }
 }
