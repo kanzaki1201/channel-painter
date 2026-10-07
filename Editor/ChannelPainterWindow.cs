@@ -89,8 +89,15 @@ namespace Malloc.ChannelPainter.Editor
         internal Color BlendColor => blend == BrushBlend.Add ? new Color(0.35f, 1f, 0.45f)
             : blend == BrushBlend.Subtract ? new Color(1f, 0.4f, 0.4f) : Color.white;
         internal string StatusText => "Channel Painter  |  " + (tool == PaintTool.FillIsland ? "Fill Island" : "Brush") +
-            "  |  " + blend + "  |  " + ChannelText + "  (A add, S subtract, R replace)";
-        string ChannelText => (red ? "R" : "") + (green ? "G" : "") + (blue ? "B" : "") + (alpha ? "A" : "");
+            "  |  " + blend + "  |  " + ChannelText + "  (A add, S subtract, R replace, 1-4 toggle RGBA)";
+        string ChannelText
+        {
+            get
+            {
+                string text = (red ? "R" : "") + (green ? "G" : "") + (blue ? "B" : "") + (alpha ? "A" : "");
+                return text.Length == 0 ? "no channels" : text;
+            }
+        }
 
         // Active only while painting, so A, S and R override the scene view tool shortcuts only then.
         sealed class PaintShortcutContext : IShortcutContext
@@ -108,6 +115,29 @@ namespace Malloc.ChannelPainter.Editor
 
         [Shortcut("Channel Painter/Blend Replace", typeof(PaintShortcutContext), KeyCode.R)]
         static void ShortcutReplace() => Active?.SetBlend(BrushBlend.Replace);
+
+        [Shortcut("Channel Painter/Toggle Red", typeof(PaintShortcutContext), KeyCode.Alpha1)]
+        static void ShortcutRed() => Active?.ToggleChannel(0);
+
+        [Shortcut("Channel Painter/Toggle Green", typeof(PaintShortcutContext), KeyCode.Alpha2)]
+        static void ShortcutGreen() => Active?.ToggleChannel(1);
+
+        [Shortcut("Channel Painter/Toggle Blue", typeof(PaintShortcutContext), KeyCode.Alpha3)]
+        static void ShortcutBlue() => Active?.ToggleChannel(2);
+
+        [Shortcut("Channel Painter/Toggle Alpha", typeof(PaintShortcutContext), KeyCode.Alpha4)]
+        static void ShortcutAlpha() => Active?.ToggleChannel(3);
+
+        void ToggleChannel(int channel)
+        {
+            if (channel == 0) red = !red;
+            else if (channel == 1) green = !green;
+            else if (channel == 2) blue = !blue;
+            else alpha = !alpha;
+            Repaint();
+            SceneView.RepaintAll();
+            ChannelPainterUVWindow.Active?.Repaint();
+        }
 
         void SetBlend(BrushBlend next)
         {
