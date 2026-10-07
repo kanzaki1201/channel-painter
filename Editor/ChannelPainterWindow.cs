@@ -16,6 +16,7 @@ namespace Malloc.ChannelPainter.Editor
         static readonly int[] Sizes = { 512, 1024, 2048, 4096 };
         static readonly string[] SizeLabels = { "512", "1024", "2048", "4096" };
         static readonly string[] OutputLabels = { "Map", "Vertex color" };
+        static readonly string[] MaskSourceLabels = { "Canvas", "Vertex Color" };
         static readonly string[] ViewLabels = { "RGBA", "R", "G", "B", "A" };
         static readonly string[] ToolLabels = { "Brush", "Fill Island" };
         const float MinRadius = 0.001f;
@@ -47,6 +48,7 @@ namespace Malloc.ChannelPainter.Editor
         [SerializeField] bool paint;
         [SerializeField] PaintTool tool;
         [SerializeField] bool showMask;
+        [SerializeField] bool maskVertexColor;
         [SerializeField] bool dirtyFlag;
         [SerializeField] int viewChannel;
         [SerializeField] PaintOutput output;
@@ -497,6 +499,14 @@ namespace Malloc.ChannelPainter.Editor
             if (nextShowMask != showMask)
             {
                 showMask = nextShowMask;
+                SceneView.RepaintAll();
+            }
+            int nextSource = EditorGUILayout.Popup(new GUIContent("Mask Source",
+                "Canvas shows the paint. Vertex Color shows the mesh's current vertex colors, with or without a canvas."),
+                maskVertexColor ? 1 : 0, MaskSourceLabels);
+            if ((nextSource == 1) != maskVertexColor)
+            {
+                maskVertexColor = nextSource == 1;
                 SceneView.RepaintAll();
             }
             if (GUILayout.Button("Open UV Window"))
@@ -1056,14 +1066,17 @@ namespace Malloc.ChannelPainter.Editor
 
         void OnBeginCameraRendering(ScriptableRenderContext context, Camera camera)
         {
-            if (!showMask || camera.cameraType != CameraType.SceneView || viewMaterial == null ||
-                canvas == null || session == null || target == null)
+            if (!showMask || camera.cameraType != CameraType.SceneView || viewMaterial == null || target == null)
+                return;
+            if (!maskVertexColor && (canvas == null || session == null))
                 return;
             if (!PaintMesh(out Mesh mesh, out Matrix4x4 matrix))
                 return;
-            viewMaterial.SetTexture("_MainTex", canvas.Preview);
+            if (canvas != null)
+                viewMaterial.SetTexture("_MainTex", canvas.Preview);
             viewMaterial.SetInt("_ViewChannel", viewChannel);
-            viewMaterial.SetFloat("_UseVertexColor", session.IsVertexColor ? 1 : 0);
+            viewMaterial.SetFloat("_UseVertexColor", maskVertexColor ? 1 : 0);
+            viewMaterial.SetFloat("_HasVertexColor", mesh.HasVertexAttribute(VertexAttribute.Color) ? 1 : 0);
             viewMaterial.SetMatrix("_MaskMatrix", matrix);
             Graphics.DrawMesh(mesh, matrix, viewMaterial, 0, camera, slot);
         }

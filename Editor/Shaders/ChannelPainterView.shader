@@ -16,6 +16,7 @@ Shader "Hidden/ChannelPainter/View"
         SAMPLER(sampler_MainTex);
         float4x4 _MaskMatrix;
         float _UseVertexColor;
+        float _HasVertexColor;
         float _ViewChannel;
 
         half4 ViewChannel(half4 value)
@@ -66,8 +67,10 @@ Shader "Hidden/ChannelPainter/View"
 
             half4 MaskFragment(MaskVaryings input) : SV_Target
             {
+                // A mesh without a color attribute reads as white, like the vertex color load.
+                half4 vertexColor = _HasVertexColor > 0.5 ? input.color : half4(1, 1, 1, 1);
                 half4 value = _UseVertexColor > 0.5
-                    ? input.color : SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv);
+                    ? vertexColor : SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv);
                 return ViewChannel(value);
             }
             ENDHLSL
