@@ -5,6 +5,14 @@ using UnityEngine.Rendering;
 
 namespace Malloc.ChannelPainter.Editor
 {
+    // Values match _BrushMode in the brush shader.
+    public enum BrushBlend
+    {
+        Replace,
+        Add,
+        Subtract
+    }
+
     public sealed class PaintCanvas : IDisposable
     {
         const int UndoLimit = 10;
@@ -23,6 +31,7 @@ namespace Malloc.ChannelPainter.Editor
         // Dilated copy for display: bilinear sampling on sub-texel UV slivers reads the island fringe.
         public RenderTexture Preview { get; }
         public Vector4 PaintedChannels { get; private set; }
+        public BrushBlend BlendMode { get; set; }
         public bool CanUndo => snapshots.Count > 0;
 
         public PaintCanvas(int size, Color fill)
@@ -195,6 +204,7 @@ namespace Malloc.ChannelPainter.Editor
             properties.SetFloat("_BrushHardness", hardness);
             properties.SetFloat("_BrushStrength", strength);
             properties.SetFloat("_BrushValue", value);
+            properties.SetFloat("_BrushMode", (float)BlendMode);
             properties.SetVector("_ChannelMask", channelMask);
 
             var commands = new CommandBuffer { name = "Channel Painter Brush" };

@@ -36,6 +36,9 @@ namespace Malloc.ChannelPainter.Editor
         [SerializeField] float radius = 0.1f;
         [SerializeField] float hardness = 0.5f;
         [SerializeField] float strength = 1;
+        [SerializeField] BrushBlend blend;
+        [SerializeField] bool pressureStrength = true;
+        [SerializeField] bool pressureSize;
         [SerializeField] bool red = true;
         [SerializeField] bool green = true;
         [SerializeField] bool blue = true;
@@ -383,11 +386,15 @@ namespace Malloc.ChannelPainter.Editor
                 ChannelPainterUVWindow.Active?.Repaint();
             }
             EditorGUI.BeginChangeCheck();
+            blend = (BrushBlend)EditorGUILayout.EnumPopup(
+                new GUIContent("Blend", "Replace sets the value. Add and Subtract change the current value by Value."), blend);
             value = EditorGUILayout.Slider("Value", value, 0, 1);
             radius = EditorGUILayout.Slider(new GUIContent("Radius (world units)", "[ and ] in the scene view."),
                 radius, MinRadius, MaxRadius);
             hardness = EditorGUILayout.Slider("Hardness", hardness, 0, 1);
             strength = EditorGUILayout.Slider("Strength", strength, 0, 1);
+            pressureStrength = EditorGUILayout.Toggle("Pen Pressure → Strength", pressureStrength);
+            pressureSize = EditorGUILayout.Toggle("Pen Pressure → Size", pressureSize);
             using (new EditorGUILayout.HorizontalScope())
             {
                 EditorGUILayout.PrefixLabel("Channels");
@@ -944,6 +951,7 @@ namespace Malloc.ChannelPainter.Editor
             if (canvas == null || session == null || TargetMesh == null)
                 return;
             canvas.PushUndo();
+            canvas.BlendMode = blend;
             canvas.Fill(TargetMesh, slot, triangles, value, ChannelMask);
             MarkDirty();
             UpdateVertexColors(true);
@@ -965,7 +973,9 @@ namespace Malloc.ChannelPainter.Editor
                     canvas.PushUndo();
                     strokeSnapshotTaken = true;
                 }
-                canvas.Paint(mesh, matrix, slot, hit.point, radius, hardness, strength, value, ChannelMask);
+                Vector2 pressured = Pressured(strength, radius, PenPressure(evt), pressureStrength, pressureSize);
+                canvas.BlendMode = blend;
+                canvas.Paint(mesh, matrix, slot, hit.point, pressured.y, hardness, pressured.x, value, ChannelMask);
                 MarkDirty();
                 UpdateVertexColors(false);
                 SceneView.RepaintAll();
@@ -974,7 +984,19 @@ namespace Malloc.ChannelPainter.Editor
             evt.Use();
         }
 
-        internal void PaintUV(Vector2 uv, float radiusPixels, bool beginStroke)
+        // A mouse reports no pressure, so only a pen scales the brush.
+        public static float PenPressure(Event evt)
+        {
+            return evt.pointerType == PointerType.Pen ? Mathf.Clamp01(evt.pressure) : 1;
+        }
+
+        // x = strength, y = radius.
+        public static Vector2 Pressured(float strength, float radius, float pressure, bool toStrength, bool toSize)
+        {
+            return new Vector2(toStrength ? strength * pressure : strength, toSize ? radius * pressure : radius);
+        }
+
+        internal void PaintUV(Vector2 uv, float radiusPixels, bool beginStroke, float pressure)
         {
             if (canvas == null || session == null || TargetMesh == null)
                 return;
@@ -985,7 +1007,9 @@ namespace Malloc.ChannelPainter.Editor
                 canvas.PushUndo();
                 strokeSnapshotTaken = true;
             }
-            canvas.PaintUV(TargetMesh, slot, uv, radiusPixels, hardness, strength, value, ChannelMask);
+            Vector2 pressured = Pressured(strength, radiusPixels, pressure, pressureStrength, pressureSize);
+            canvas.BlendMode = blend;
+            canvas.PaintUV(TargetMesh, slot, uv, pressured.y, hardness, pressured.x, value, ChannelMask);
             MarkDirty();
             UpdateVertexColors(false);
             SceneView.RepaintAll();

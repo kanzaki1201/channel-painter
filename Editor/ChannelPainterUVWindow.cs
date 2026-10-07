@@ -257,7 +257,7 @@ namespace Malloc.ChannelPainter.Editor
             else
             {
                 painting = true;
-                main.PaintUV(PointToUV(mouse, canvasRect), brushRadius, true);
+                main.PaintUV(PointToUV(mouse, canvasRect), brushRadius, true, ChannelPainterWindow.PenPressure(evt));
             }
             evt.Use();
             Repaint();
@@ -275,7 +275,7 @@ namespace Malloc.ChannelPainter.Editor
             if (!painting)
                 return;
             if (canvasRect.Contains(mouse))
-                main.PaintUV(PointToUV(mouse, canvasRect), brushRadius, false);
+                main.PaintUV(PointToUV(mouse, canvasRect), brushRadius, false, ChannelPainterWindow.PenPressure(evt));
             evt.Use();
             Repaint();
         }

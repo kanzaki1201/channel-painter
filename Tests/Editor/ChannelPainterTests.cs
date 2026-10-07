@@ -236,5 +236,58 @@ namespace Malloc.ChannelPainter.Editor
                 Object.DestroyImmediate(mesh);
             }
         }
+            [Test]
+        public void PenPressureScalesOnlyTheChosenSettings()
+        {
+            Assert.That(ChannelPainterWindow.Pressured(0.8f, 0.2f, 0.5f, true, false), Is.EqualTo(new Vector2(0.4f, 0.2f)));
+            Assert.That(ChannelPainterWindow.Pressured(0.8f, 0.2f, 0.5f, false, true), Is.EqualTo(new Vector2(0.8f, 0.1f)));
+            Assert.That(ChannelPainterWindow.Pressured(0.8f, 0.2f, 0.5f, false, false), Is.EqualTo(new Vector2(0.8f, 0.2f)));
+        }
+
+        [Test]
+        public void AddAndSubtractChangeTheCurrentValue()
+        {
+            var quad = new Mesh
+            {
+                vertices = new[]
+                {
+                    new Vector3(0, 0, 0), new Vector3(1, 0, 0),
+                    new Vector3(1, 1, 0), new Vector3(0, 1, 0)
+                },
+                uv = new[]
+                {
+                    new Vector2(0, 0), new Vector2(1, 0),
+                    new Vector2(1, 1), new Vector2(0, 1)
+                },
+                triangles = new[] { 0, 1, 2, 0, 2, 3 }
+            };
+
+            try
+            {
+                using (var canvas = new PaintCanvas(64, new Color(0.5f, 0.5f, 0.5f, 0.5f)))
+                {
+                    canvas.BlendMode = BrushBlend.Add;
+                    canvas.Fill(quad, 0, null, 0.25f, new Vector4(1, 0, 0, 0));
+                    canvas.BlendMode = BrushBlend.Subtract;
+                    canvas.Fill(quad, 0, null, 0.125f, new Vector4(0, 1, 0, 0));
+                    Texture2D readback = canvas.ReadbackDilated(quad, 0);
+                    try
+                    {
+                        Color texel = readback.GetPixelBilinear(0.5f, 0.5f);
+                        Assert.That(texel.r, Is.EqualTo(0.75f).Within(0.01f));
+                        Assert.That(texel.g, Is.EqualTo(0.375f).Within(0.01f));
+                        Assert.That(texel.b, Is.EqualTo(0.5f).Within(0.01f));
+                    }
+                    finally
+                    {
+                        Object.DestroyImmediate(readback);
+                    }
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(quad);
+            }
+        }
     }
 }

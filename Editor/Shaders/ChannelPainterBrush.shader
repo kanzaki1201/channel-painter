@@ -66,6 +66,7 @@ Shader "Hidden/ChannelPainter/Brush"
             float _BrushSpace;
             float2 _BrushCenterUV;
             float2 _CanvasSize;
+            float _BrushMode;
 
             float4 Brush(Varyings input) : SV_Target
             {
@@ -80,8 +81,12 @@ Shader "Hidden/ChannelPainter/Brush"
                 float weight = saturate(_BrushStrength * falloff);
                 // Overlapping UV triangles would otherwise write source back over fresh paint.
                 clip(weight - 1e-5);
-                return lerp(source, float4(_BrushValue, _BrushValue, _BrushValue, _BrushValue),
-                    weight * _ChannelMask);
+                float4 delta = weight * _ChannelMask;
+                if (_BrushMode > 1.5)
+                    return saturate(source - _BrushValue * delta);
+                if (_BrushMode > 0.5)
+                    return saturate(source + _BrushValue * delta);
+                return lerp(source, float4(_BrushValue, _BrushValue, _BrushValue, _BrushValue), delta);
             }
             ENDHLSL
         }
