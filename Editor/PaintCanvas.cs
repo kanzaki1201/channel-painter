@@ -356,6 +356,9 @@ namespace Malloc.ChannelPainter.Editor
 
         static void Release(RenderTexture texture)
         {
+            // Graphics.Blit leaves its target active.
+            if (RenderTexture.active == texture)
+                RenderTexture.active = null;
             texture.Release();
             UnityEngine.Object.DestroyImmediate(texture);
         }

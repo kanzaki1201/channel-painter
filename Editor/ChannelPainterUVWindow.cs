@@ -22,7 +22,7 @@ namespace Malloc.ChannelPainter.Editor
 
         internal static ChannelPainterUVWindow Active { get; private set; }
 
-        [MenuItem("Tools/Channel Painter UV")]
+        [MenuItem("Tools/Channel Painter/Channel Painter UV")]
         internal static void Open()
         {
             GetWindow<ChannelPainterUVWindow>("Channel Painter UV");

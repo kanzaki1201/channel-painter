@@ -44,7 +44,6 @@ namespace Malloc.ChannelPainter.Editor
         [SerializeField] bool green = true;
         [SerializeField] bool blue = true;
         [SerializeField] bool alpha = true;
-        [SerializeField] bool assignToMaterial = true;
         [SerializeField] bool paint;
         [SerializeField] PaintTool tool;
         [SerializeField] bool showMask;
@@ -53,7 +52,7 @@ namespace Malloc.ChannelPainter.Editor
         [SerializeField] int viewChannel;
         [SerializeField] PaintOutput output;
         [SerializeField] Vector4 reloadChannels;
-        [SerializeField] Texture loadTexture;
+        int pickerId;
 
         PaintCanvas canvas;
         PaintSession session;
@@ -105,7 +104,7 @@ namespace Malloc.ChannelPainter.Editor
         bool HasOutputProperty => output == PaintOutput.VertexColor || !string.IsNullOrEmpty(propertyName);
         Texture PropertyTexture => string.IsNullOrEmpty(propertyName) ? null : CurrentMaterial()?.GetTexture(propertyName);
 
-        [MenuItem("Tools/Channel Painter")]
+        [MenuItem("Tools/Channel Painter/Channel Painter")]
         static void Open()
         {
             GetWindow<ChannelPainterWindow>("Channel Painter");
@@ -177,6 +176,7 @@ namespace Malloc.ChannelPainter.Editor
 
         void OnGUI()
         {
+            EditorGUILayout.LabelField("Target", EditorStyles.boldLabel);
             Renderer chosen = (Renderer)EditorGUILayout.ObjectField("Target", target, typeof(Renderer), true);
             if (chosen != target)
                 ChangeSelection(() => SetTarget(chosen));
@@ -192,20 +192,10 @@ namespace Malloc.ChannelPainter.Editor
                 CurrentMaterial() == null || !HasOutputProperty)
                 return;
 
-            DrawBrushSettings();
             DrawCanvasSettings();
-            DrawOutputSettings();
-            using (new EditorGUI.DisabledScope(canvas == null || EditorApplication.isPlayingOrWillChangePlaymode))
-                if (GUILayout.Button(paint ? "Stop Painting" : "Start Painting"))
-                {
-                    paint = !paint;
-                    hasHit = false;
-                    if (!paint)
-                        EndStroke();
-                    SceneView.RepaintAll();
-                    ChannelPainterUVWindow.Active?.Repaint();
-                    GUIUtility.ExitGUI();
-                }
+            DrawPaintSettings();
+            DrawViewSettings();
+            DrawSaveSettings();
             if (session != null && session.IsVertexColor)
                 EditorGUILayout.HelpBox("End the Vertex color session before Apply Overrides or dragging this object into the Project window.", MessageType.Warning);
         }
@@ -375,10 +365,21 @@ namespace Malloc.ChannelPainter.Editor
             return properties.ToArray();
         }
 
-        void DrawBrushSettings()
+        void DrawPaintSettings()
         {
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Brush", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Paint", EditorStyles.boldLabel);
+            using (new EditorGUI.DisabledScope(canvas == null || EditorApplication.isPlayingOrWillChangePlaymode))
+                if (GUILayout.Button(paint ? "Stop Painting" : "Start Painting", GUILayout.Height(28)))
+                {
+                    paint = !paint;
+                    hasHit = false;
+                    if (!paint)
+                        EndStroke();
+                    SceneView.RepaintAll();
+                    ChannelPainterUVWindow.Active?.Repaint();
+                    GUIUtility.ExitGUI();
+                }
             PaintTool chosenTool = (PaintTool)EditorGUILayout.Popup("Tool", (int)tool, ToolLabels);
             if (chosenTool != tool)
             {
@@ -391,15 +392,18 @@ namespace Malloc.ChannelPainter.Editor
             blend = (BrushBlend)EditorGUILayout.EnumPopup(
                 new GUIContent("Blend", "Replace sets the value. Add and Subtract change the current value by Value."), blend);
             value = EditorGUILayout.Slider("Value", value, 0, 1);
-            radius = EditorGUILayout.Slider(new GUIContent("Radius (world units)", "[ and ] in the scene view."),
-                radius, MinRadius, MaxRadius);
-            hardness = EditorGUILayout.Slider("Hardness", hardness, 0, 1);
-            strength = EditorGUILayout.Slider("Strength", strength, 0, 1);
-            pressureStrength = EditorGUILayout.Toggle("Pen Pressure → Strength", pressureStrength);
-            pressureSize = EditorGUILayout.Toggle("Pen Pressure → Size", pressureSize);
+            if (tool == PaintTool.Brush)
+            {
+                radius = EditorGUILayout.Slider(new GUIContent("Radius (world units)", "[ and ] in the scene view."),
+                    radius, MinRadius, MaxRadius);
+                hardness = EditorGUILayout.Slider("Hardness", hardness, 0, 1);
+                strength = EditorGUILayout.Slider("Strength", strength, 0, 1);
+                pressureStrength = EditorGUILayout.Toggle("Pen Pressure → Strength", pressureStrength);
+                pressureSize = EditorGUILayout.Toggle("Pen Pressure → Size", pressureSize);
+            }
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.PrefixLabel("Channels");
+                EditorGUILayout.PrefixLabel("Paint On Channels");
                 red = GUILayout.Toggle(red, "R", EditorStyles.miniButtonLeft, GUILayout.Width(28));
                 green = GUILayout.Toggle(green, "G", EditorStyles.miniButtonMid, GUILayout.Width(28));
                 blue = GUILayout.Toggle(blue, "B", EditorStyles.miniButtonMid, GUILayout.Width(28));
@@ -408,13 +412,25 @@ namespace Malloc.ChannelPainter.Editor
             }
             if (EditorGUI.EndChangeCheck())
                 SceneView.RepaintAll();
-            using (new EditorGUI.DisabledScope(canvas == null || session == null ||
-                EditorApplication.isPlayingOrWillChangePlaymode))
-                if (GUILayout.Button("Fill Map"))
-                {
-                    FillTriangles(null);
-                    GUIUtility.ExitGUI();
-                }
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                using (new EditorGUI.DisabledScope(canvas == null || session == null ||
+                    EditorApplication.isPlayingOrWillChangePlaymode))
+                    if (GUILayout.Button(new GUIContent("Fill Canvas", "Apply Value to every texel of the target submesh.")))
+                    {
+                        FillTriangles(null);
+                        GUIUtility.ExitGUI();
+                    }
+                using (new EditorGUI.DisabledScope(canvas == null || !canvas.CanUndo))
+                    if (GUILayout.Button("Undo"))
+                    {
+                        canvas.Undo();
+                        MarkDirty();
+                        UpdateVertexColors(true);
+                        SceneView.RepaintAll();
+                        ChannelPainterUVWindow.Active?.Repaint();
+                    }
+            }
         }
 
         void DrawCanvasSettings()
@@ -422,13 +438,14 @@ namespace Malloc.ChannelPainter.Editor
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Canvas", EditorStyles.boldLabel);
             sizeIndex = EditorGUILayout.Popup("Size", sizeIndex, SizeLabels);
-            fill = EditorGUILayout.ColorField("Fill Color", fill);
-            string newTooltip = output == PaintOutput.Map && PropertyTexture == null
-                ? "Start a canvas filled with Fill Color. The material has no " + propertyName + ", so this also saves the canvas as a new PNG and assigns it."
-                : "Start a canvas filled with Fill Color.";
-            if (GUILayout.Button(new GUIContent("New Canvas", newTooltip)))
-                ChangeSelection(NewCanvas);
             if (output == PaintOutput.Map)
+            {
+                fill = EditorGUILayout.ColorField("Fill Color", fill);
+                string newTooltip = PropertyTexture == null
+                    ? "Start a canvas filled with Fill Color. The material has no " + propertyName + ", so this also saves the canvas as a new PNG and assigns it."
+                    : "Start a canvas filled with Fill Color.";
+                if (GUILayout.Button(new GUIContent("New Canvas", newTooltip)))
+                    ChangeSelection(NewCanvas);
                 using (new EditorGUI.DisabledScope(PropertyTexture == null))
                     if (GUILayout.Button(new GUIContent("Load " + propertyName + " From Material",
                         "Replace the canvas with the map that the material holds in " + propertyName + ".")))
@@ -436,26 +453,26 @@ namespace Malloc.ChannelPainter.Editor
                         Load(PropertyTexture);
                         GUIUtility.ExitGUI();
                     }
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                loadTexture = (Texture)EditorGUILayout.ObjectField(
-                    new GUIContent("Other Texture", "Any texture to copy into the canvas."), loadTexture, typeof(Texture), false);
-                using (new EditorGUI.DisabledScope(loadTexture == null))
-                    if (GUILayout.Button("Load Into Canvas", GUILayout.Width(120)))
-                    {
-                        Load(loadTexture);
-                        GUIUtility.ExitGUI();
-                    }
             }
-            using (new EditorGUI.DisabledScope(canvas == null || !canvas.CanUndo))
-                if (GUILayout.Button("Undo"))
-                {
-                    canvas.Undo();
-                    MarkDirty();
-                    UpdateVertexColors(true);
-                    SceneView.RepaintAll();
-                    ChannelPainterUVWindow.Active?.Repaint();
-                }
+            else if (GUILayout.Button(new GUIContent("Reset To Mesh Colors",
+                "Replace the canvas with the vertex colors of the original mesh.")))
+                ChangeSelection(NewCanvas);
+
+            if (GUILayout.Button(new GUIContent("Load Texture...", "Pick any texture and copy it into the canvas.")))
+            {
+                pickerId = GUIUtility.GetControlID(FocusType.Passive);
+                EditorGUIUtility.ShowObjectPicker<Texture>(null, false, "", pickerId);
+                GUIUtility.ExitGUI();
+            }
+            Event evt = Event.current;
+            if (evt.type == EventType.ExecuteCommand && evt.commandName == "ObjectSelectorClosed" &&
+                EditorGUIUtility.GetObjectPickerControlID() == pickerId)
+            {
+                pickerId = 0;
+                if (EditorGUIUtility.GetObjectPickerObject() is Texture picked)
+                    Load(picked);
+                GUIUtility.ExitGUI();
+            }
         }
 
         void NewCanvas()
@@ -469,7 +486,7 @@ namespace Malloc.ChannelPainter.Editor
             ClearDirty();
             StartSession();
             if (output == PaintOutput.Map && PropertyTexture == null)
-                SaveMap(saveAs: true, forceAssign: true);
+                SaveMap(saveAs: true);
             UpdateVertexColors(true);
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
@@ -490,44 +507,59 @@ namespace Malloc.ChannelPainter.Editor
             ChannelPainterUVWindow.Active?.Repaint();
         }
 
-        void DrawOutputSettings()
+        void DrawViewSettings()
         {
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Output", EditorStyles.boldLabel);
-            ViewChannel = EditorGUILayout.Popup("View", viewChannel, ViewLabels);
-            bool nextShowMask = EditorGUILayout.Toggle("Show mask", showMask);
+            EditorGUILayout.LabelField("View", EditorStyles.boldLabel);
+            ViewChannel = EditorGUILayout.Popup("Show Channel", viewChannel, ViewLabels);
+            bool nextShowMask = EditorGUILayout.Toggle("Show Mask In Scene View", showMask);
             if (nextShowMask != showMask)
             {
                 showMask = nextShowMask;
                 SceneView.RepaintAll();
             }
-            int nextSource = EditorGUILayout.Popup(new GUIContent("Mask Source",
-                "Canvas shows the paint. Vertex Color shows the mesh's current vertex colors, with or without a canvas."),
-                maskVertexColor ? 1 : 0, MaskSourceLabels);
-            if ((nextSource == 1) != maskVertexColor)
+            // In Vertex color output the canvas already drives the vertex colors.
+            if (output == PaintOutput.Map)
             {
-                maskVertexColor = nextSource == 1;
-                SceneView.RepaintAll();
+                int nextSource = EditorGUILayout.Popup(new GUIContent("Mask Source",
+                    "Canvas shows the paint. Vertex Color shows the mesh's current vertex colors, with or without a canvas."),
+                    maskVertexColor ? 1 : 0, MaskSourceLabels);
+                if ((nextSource == 1) != maskVertexColor)
+                {
+                    maskVertexColor = nextSource == 1;
+                    SceneView.RepaintAll();
+                }
             }
             if (GUILayout.Button("Open UV Window"))
             {
                 ChannelPainterUVWindow.Open();
                 GUIUtility.ExitGUI();
             }
-            assignToMaterial = EditorGUILayout.Toggle("Assign to material", assignToMaterial);
+        }
+
+        void DrawSaveSettings()
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Save", EditorStyles.boldLabel);
             using (new EditorGUI.DisabledScope(canvas == null))
             {
-                if (GUILayout.Button("Save Map"))
+                if (output == PaintOutput.Map)
                 {
-                    SaveMap();
-                    GUIUtility.ExitGUI();
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        if (GUILayout.Button(new GUIContent("Save Map", "Overwrite the PNG assigned to the material, or ask for a path when none is assigned.")))
+                        {
+                            SaveMap();
+                            GUIUtility.ExitGUI();
+                        }
+                        if (GUILayout.Button(new GUIContent("Save Map As...", "Save to a new PNG and assign it.")))
+                        {
+                            SaveMap(true);
+                            GUIUtility.ExitGUI();
+                        }
+                    }
                 }
-                if (GUILayout.Button("Save Map As..."))
-                {
-                    SaveMap(true);
-                    GUIUtility.ExitGUI();
-                }
-                if (GUILayout.Button("Bake To Vertex Color"))
+                else if (GUILayout.Button("Bake To Vertex Color"))
                 {
                     BakeVertexColor();
                     GUIUtility.ExitGUI();
@@ -1086,7 +1118,7 @@ namespace Malloc.ChannelPainter.Editor
             return output == PaintOutput.Map ? SaveMap() : BakeVertexColor();
         }
 
-        bool SaveMap(bool saveAs = false, bool forceAssign = false)
+        bool SaveMap(bool saveAs = false)
         {
             if (canvas == null || !PaintMesh(out Mesh mesh, out _))
                 return false;
@@ -1119,7 +1151,7 @@ namespace Malloc.ChannelPainter.Editor
             importer.maxTextureSize = Mathf.Max(importer.maxTextureSize, canvas.Texture.width);
             importer.SaveAndReimport();
 
-            if ((assignToMaterial || forceAssign) && !string.IsNullOrEmpty(propertyName))
+            if (!string.IsNullOrEmpty(propertyName))
             {
                 Material material = CurrentMaterial();
                 Undo.RecordObject(material, "Assign Channel Painter Map");
