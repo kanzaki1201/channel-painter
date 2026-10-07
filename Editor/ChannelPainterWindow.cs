@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -12,6 +13,8 @@ namespace Malloc.ChannelPainter.Editor
     {
         static readonly int[] Sizes = { 512, 1024, 2048, 4096 };
         static readonly string[] SizeLabels = { "512", "1024", "2048", "4096" };
+        const float MinRadius = 0.001f;
+        const float MaxRadius = 1f;
         static readonly MethodInfo IntersectRayMesh = typeof(HandleUtility).GetMethod(
             "IntersectRayMesh", BindingFlags.Static | BindingFlags.NonPublic, null,
             new[] { typeof(Ray), typeof(Mesh), typeof(Matrix4x4), typeof(RaycastHit).MakeByRefType() }, null);
@@ -178,10 +181,34 @@ namespace Malloc.ChannelPainter.Editor
                 propertyName = chosenProperty;
                 ApplyPreview();
             }
-            if (material.GetTexture(propertyName) == null)
+            string keyword = KeywordFor(material.shader, propertyName);
+            if (keyword != null && !material.IsKeywordEnabled(keyword))
+            {
+                EditorGUILayout.HelpBox(keyword + " is off, so the shader ignores " + propertyName + ".", MessageType.Warning);
+                if (GUILayout.Button("Enable " + keyword))
+                    EnableKeyword(material, keyword);
+            }
+            else if (keyword == null && material.GetTexture(propertyName) == null)
                 EditorGUILayout.HelpBox("This property has no texture. Assign one in the material inspector if the shader needs a keyword to use it.", MessageType.Warning);
             if (mesh.uv == null || mesh.uv.Length != mesh.vertexCount)
                 EditorGUILayout.HelpBox("The target mesh has no UV0.", MessageType.Error);
+        }
+
+        // ponytail: name match (_OutlineMap -> *_OUTLINE_MAP); add a per-shader table if a shader breaks the convention.
+        static string KeywordFor(Shader shader, string property)
+        {
+            string snake = "_" + Regex.Replace(property.TrimStart('_'), "(?<=[a-z0-9])(?=[A-Z])", "_").ToUpperInvariant();
+            foreach (string name in shader.keywordSpace.keywordNames)
+                if (name.EndsWith(snake, StringComparison.Ordinal))
+                    return name;
+            return null;
+        }
+
+        static void EnableKeyword(Material material, string keyword)
+        {
+            Undo.RecordObject(material, "Enable " + keyword);
+            material.EnableKeyword(keyword);
+            EditorUtility.SetDirty(material);
         }
 
         static string[] TextureProperties(Shader shader)
@@ -197,8 +224,10 @@ namespace Malloc.ChannelPainter.Editor
         {
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Brush", EditorStyles.boldLabel);
+            EditorGUI.BeginChangeCheck();
             value = EditorGUILayout.Slider("Value", value, 0, 1);
-            radius = Mathf.Max(0.0001f, EditorGUILayout.FloatField("Radius (world units)", radius));
+            radius = EditorGUILayout.Slider(new GUIContent("Radius (world units)", "[ and ] in the scene view."),
+                radius, MinRadius, MaxRadius);
             hardness = EditorGUILayout.Slider("Hardness", hardness, 0, 1);
             strength = EditorGUILayout.Slider("Strength", strength, 0, 1);
             using (new EditorGUILayout.HorizontalScope())
@@ -208,6 +237,8 @@ namespace Malloc.ChannelPainter.Editor
                 blue = EditorGUILayout.ToggleLeft("B", blue);
                 alpha = EditorGUILayout.ToggleLeft("A", alpha);
             }
+            if (EditorGUI.EndChangeCheck())
+                SceneView.RepaintAll();
         }
 
         void DrawCanvasSettings()
@@ -349,6 +380,16 @@ namespace Malloc.ChannelPainter.Editor
             if (evt.alt)
                 return;
             HandleUtility.AddDefaultControl(GUIUtility.GetControlID(FocusType.Passive));
+            if (evt.type == EventType.KeyDown &&
+                (evt.keyCode == KeyCode.LeftBracket || evt.keyCode == KeyCode.RightBracket))
+            {
+                float step = evt.keyCode == KeyCode.RightBracket ? 1.15f : 1 / 1.15f;
+                radius = Mathf.Clamp(radius * step, MinRadius, MaxRadius);
+                evt.Use();
+                Repaint();
+                view.Repaint();
+                return;
+            }
             if (evt.type == EventType.Repaint && hasHit)
                 Handles.DrawWireDisc(hitPoint, hitNormal, radius);
             if (evt.type != EventType.MouseMove && evt.type != EventType.MouseDown &&
@@ -421,6 +462,9 @@ namespace Malloc.ChannelPainter.Editor
             Material material = CurrentMaterial();
             Undo.RecordObject(material, "Assign Channel Painter Map");
             material.SetTexture(propertyName, AssetDatabase.LoadAssetAtPath<Texture2D>(path));
+            string keyword = KeywordFor(material.shader, propertyName);
+            if (keyword != null)
+                material.EnableKeyword(keyword);
             EditorUtility.SetDirty(material);
         }
 
