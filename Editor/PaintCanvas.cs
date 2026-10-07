@@ -154,6 +154,29 @@ namespace Malloc.ChannelPainter.Editor
             Paint(mesh, submesh, radiusPixels, hardness, strength, value, channelMask, properties);
         }
 
+        public void Fill(Mesh mesh, int submesh, int[] triangleIndices, float value, Vector4 channelMask)
+        {
+            Mesh fillMesh = null;
+            try
+            {
+                if (triangleIndices != null)
+                {
+                    fillMesh = new Mesh { hideFlags = HideFlags.HideAndDontSave,
+                        indexFormat = mesh.vertexCount > 65535 ? IndexFormat.UInt32 : mesh.indexFormat };
+                    fillMesh.vertices = mesh.vertices;
+                    fillMesh.uv = mesh.uv;
+                    fillMesh.SetTriangles(triangleIndices, 0);
+                }
+                PaintUV(fillMesh ?? mesh, fillMesh == null ? submesh : 0,
+                    new Vector2(0.5f, 0.5f), Texture.width * 2f, 1, 1, value, channelMask);
+            }
+            finally
+            {
+                if (fillMesh != null)
+                    UnityEngine.Object.DestroyImmediate(fillMesh);
+            }
+        }
+
         void Paint(Mesh mesh, int submesh, float radius, float hardness, float strength,
             float value, Vector4 channelMask, MaterialPropertyBlock properties)
         {

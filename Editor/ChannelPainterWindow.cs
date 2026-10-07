@@ -11,10 +11,13 @@ namespace Malloc.ChannelPainter.Editor
 {
     public sealed class ChannelPainterWindow : EditorWindow
     {
+        enum PaintTool { Brush, FillIsland }
+
         static readonly int[] Sizes = { 512, 1024, 2048, 4096 };
         static readonly string[] SizeLabels = { "512", "1024", "2048", "4096" };
         static readonly string[] OutputLabels = { "Map", "Vertex color" };
         static readonly string[] ViewLabels = { "RGBA", "R", "G", "B", "A" };
+        static readonly string[] ToolLabels = { "Brush", "Fill Island" };
         const float MinRadius = 0.001f;
         const float MaxRadius = 1f;
         const string ReloadPath = "Temp/ChannelPainter/canvas.raw";
@@ -39,6 +42,7 @@ namespace Malloc.ChannelPainter.Editor
         [SerializeField] bool alpha = true;
         [SerializeField] bool assignToMaterial = true;
         [SerializeField] bool paint;
+        [SerializeField] PaintTool tool;
         [SerializeField] bool showMask;
         [SerializeField] bool dirtyFlag;
         [SerializeField] int viewChannel;
@@ -51,8 +55,12 @@ namespace Malloc.ChannelPainter.Editor
         Material viewMaterial;
         Mesh posedMesh;
         Mesh cachedHitMesh;
+        int cachedHitSlot = -1;
         int[] cachedTriangles;
         Vector2[] cachedUV;
+        Mesh islandMesh;
+        int islandSlot = -1;
+        int[] islandIds;
         bool hasHit;
         bool hasHoverUV;
         bool strokeSnapshotTaken;
@@ -66,6 +74,8 @@ namespace Malloc.ChannelPainter.Editor
         internal PaintCanvas Canvas => canvas;
         internal Mesh TargetMesh => target == null ? null : session != null ? session.OriginalMesh : SharedMesh();
         internal int TargetSlot => slot;
+        internal bool IsPainting => paint;
+        internal bool IsFillIsland => tool == PaintTool.FillIsland;
         internal bool HasHoverUV => hasHoverUV;
         internal Vector2 HoverUV => hoverUV;
         internal Material ViewMaterial => viewMaterial;
@@ -86,6 +96,9 @@ namespace Malloc.ChannelPainter.Editor
         Vector4 ChannelMask => new Vector4(red ? 1 : 0, green ? 1 : 0,
             blue ? 1 : 0, alpha ? 1 : 0);
         bool IsDirty => session != null ? session.Dirty : dirtyFlag;
+        // Only Map output swaps the canvas into a texture property.
+        bool HasOutputProperty => output == PaintOutput.VertexColor || !string.IsNullOrEmpty(propertyName);
+        Texture PropertyTexture => string.IsNullOrEmpty(propertyName) ? null : CurrentMaterial()?.GetTexture(propertyName);
 
         [MenuItem("Tools/Channel Painter")]
         static void Open()
@@ -171,14 +184,23 @@ namespace Malloc.ChannelPainter.Editor
             DrawTargetSettings();
             Mesh mesh = TargetMesh;
             if (mesh == null || mesh.uv.Length != mesh.vertexCount ||
-                CurrentMaterial() == null || string.IsNullOrEmpty(propertyName))
+                CurrentMaterial() == null || !HasOutputProperty)
                 return;
 
             DrawBrushSettings();
             DrawCanvasSettings();
             DrawOutputSettings();
             using (new EditorGUI.DisabledScope(canvas == null || EditorApplication.isPlayingOrWillChangePlaymode))
-                paint = EditorGUILayout.Toggle("Paint", paint);
+                if (GUILayout.Button(paint ? "Stop Painting" : "Start Painting"))
+                {
+                    paint = !paint;
+                    hasHit = false;
+                    if (!paint)
+                        EndStroke();
+                    SceneView.RepaintAll();
+                    ChannelPainterUVWindow.Active?.Repaint();
+                    GUIUtility.ExitGUI();
+                }
             if (session != null && session.IsVertexColor)
                 EditorGUILayout.HelpBox("End the Vertex color session before Apply Overrides or dragging this object into the Project window.", MessageType.Warning);
         }
@@ -218,6 +240,7 @@ namespace Malloc.ChannelPainter.Editor
             paint = false;
             hasHit = false;
             hasHoverUV = false;
+            ClearIslands();
             ClearDirty();
             Repaint();
         }
@@ -266,6 +289,7 @@ namespace Malloc.ChannelPainter.Editor
                     paint = false;
                     hasHit = false;
                     hasHoverUV = false;
+                    ClearIslands();
                     ClearDirty();
                 });
 
@@ -273,6 +297,16 @@ namespace Malloc.ChannelPainter.Editor
             if (material == null)
             {
                 EditorGUILayout.HelpBox("Choose a material for this slot.", MessageType.Error);
+                return;
+            }
+
+            PaintOutput chosenOutput = (PaintOutput)EditorGUILayout.Popup("Output", (int)output, OutputLabels);
+            if (chosenOutput != output)
+                ChangeSelection(() => SwitchOutput(chosenOutput));
+            if (output == PaintOutput.VertexColor)
+            {
+                if (mesh.uv.Length != mesh.vertexCount)
+                    EditorGUILayout.HelpBox("The target mesh has no UV0.", MessageType.Error);
                 return;
             }
 
@@ -300,7 +334,10 @@ namespace Malloc.ChannelPainter.Editor
             {
                 EditorGUILayout.HelpBox(keyword + " is off, so the shader ignores " + propertyName + ".", MessageType.Warning);
                 if (GUILayout.Button("Enable " + keyword))
+                {
                     EnableKeyword(material, keyword);
+                    GUIUtility.ExitGUI();
+                }
             }
             else if (keyword == null && material.GetTexture(propertyName) == null)
                 EditorGUILayout.HelpBox("This property has no texture. Assign one in the material inspector if the shader needs a keyword to use it.", MessageType.Warning);
@@ -337,6 +374,14 @@ namespace Malloc.ChannelPainter.Editor
         {
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Brush", EditorStyles.boldLabel);
+            PaintTool chosenTool = (PaintTool)EditorGUILayout.Popup("Tool", (int)tool, ToolLabels);
+            if (chosenTool != tool)
+            {
+                tool = chosenTool;
+                hasHit = false;
+                SceneView.RepaintAll();
+                ChannelPainterUVWindow.Active?.Repaint();
+            }
             EditorGUI.BeginChangeCheck();
             value = EditorGUILayout.Slider("Value", value, 0, 1);
             radius = EditorGUILayout.Slider(new GUIContent("Radius (world units)", "[ and ] in the scene view."),
@@ -345,13 +390,22 @@ namespace Malloc.ChannelPainter.Editor
             strength = EditorGUILayout.Slider("Strength", strength, 0, 1);
             using (new EditorGUILayout.HorizontalScope())
             {
-                red = EditorGUILayout.ToggleLeft("R", red);
-                green = EditorGUILayout.ToggleLeft("G", green);
-                blue = EditorGUILayout.ToggleLeft("B", blue);
-                alpha = EditorGUILayout.ToggleLeft("A", alpha);
+                EditorGUILayout.PrefixLabel("Channels");
+                red = GUILayout.Toggle(red, "R", EditorStyles.miniButtonLeft, GUILayout.Width(28));
+                green = GUILayout.Toggle(green, "G", EditorStyles.miniButtonMid, GUILayout.Width(28));
+                blue = GUILayout.Toggle(blue, "B", EditorStyles.miniButtonMid, GUILayout.Width(28));
+                alpha = GUILayout.Toggle(alpha, "A", EditorStyles.miniButtonRight, GUILayout.Width(28));
+                GUILayout.FlexibleSpace();
             }
             if (EditorGUI.EndChangeCheck())
                 SceneView.RepaintAll();
+            using (new EditorGUI.DisabledScope(canvas == null || session == null ||
+                EditorApplication.isPlayingOrWillChangePlaymode))
+                if (GUILayout.Button("Fill Map"))
+                {
+                    FillTriangles(null);
+                    GUIUtility.ExitGUI();
+                }
         }
 
         void DrawCanvasSettings()
@@ -362,13 +416,19 @@ namespace Malloc.ChannelPainter.Editor
             fill = EditorGUILayout.ColorField("Fill Color", fill);
             if (GUILayout.Button("New"))
                 ChangeSelection(NewCanvas);
-            using (new EditorGUI.DisabledScope(CurrentMaterial().GetTexture(propertyName) == null))
+            using (new EditorGUI.DisabledScope(PropertyTexture == null))
                 if (GUILayout.Button("Load From Material"))
-                    Load(CurrentMaterial().GetTexture(propertyName));
+                {
+                    Load(PropertyTexture);
+                    GUIUtility.ExitGUI();
+                }
             loadTexture = (Texture)EditorGUILayout.ObjectField("Load Texture", loadTexture, typeof(Texture), false);
             using (new EditorGUI.DisabledScope(loadTexture == null))
                 if (GUILayout.Button("Load"))
+                {
                     Load(loadTexture);
+                    GUIUtility.ExitGUI();
+                }
             using (new EditorGUI.DisabledScope(canvas == null || !canvas.CanUndo))
                 if (GUILayout.Button("Undo"))
                 {
@@ -414,9 +474,6 @@ namespace Malloc.ChannelPainter.Editor
         {
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Output", EditorStyles.boldLabel);
-            PaintOutput chosen = (PaintOutput)EditorGUILayout.Popup("Output", (int)output, OutputLabels);
-            if (chosen != output)
-                ChangeSelection(() => SwitchOutput(chosen));
             ViewChannel = EditorGUILayout.Popup("View", viewChannel, ViewLabels);
             bool nextShowMask = EditorGUILayout.Toggle("Show mask", showMask);
             if (nextShowMask != showMask)
@@ -425,14 +482,28 @@ namespace Malloc.ChannelPainter.Editor
                 SceneView.RepaintAll();
             }
             if (GUILayout.Button("Open UV Window"))
+            {
                 ChannelPainterUVWindow.Open();
+                GUIUtility.ExitGUI();
+            }
             assignToMaterial = EditorGUILayout.Toggle("Assign to material", assignToMaterial);
             using (new EditorGUI.DisabledScope(canvas == null))
             {
                 if (GUILayout.Button("Save Map"))
+                {
                     SaveMap();
+                    GUIUtility.ExitGUI();
+                }
+                if (GUILayout.Button("Save Map As..."))
+                {
+                    SaveMap(true);
+                    GUIUtility.ExitGUI();
+                }
                 if (GUILayout.Button("Bake To Vertex Color"))
+                {
                     BakeVertexColor();
+                    GUIUtility.ExitGUI();
+                }
             }
         }
 
@@ -456,7 +527,7 @@ namespace Malloc.ChannelPainter.Editor
 
         void StartSession()
         {
-            if (session != null || canvas == null || target == null || string.IsNullOrEmpty(propertyName) ||
+            if (session != null || canvas == null || target == null || !HasOutputProperty ||
                 EditorApplication.isPlayingOrWillChangePlaymode)
                 return;
             Mesh mesh = SharedMesh();
@@ -485,8 +556,27 @@ namespace Malloc.ChannelPainter.Editor
                 DestroyImmediate(posedMesh);
             posedMesh = null;
             cachedHitMesh = null;
+            cachedHitSlot = -1;
             cachedTriangles = null;
             cachedUV = null;
+        }
+
+        void ClearIslands()
+        {
+            islandMesh = null;
+            islandSlot = -1;
+            islandIds = null;
+        }
+
+        int[] GetIslands(Mesh mesh)
+        {
+            if (islandMesh != mesh || islandSlot != slot)
+            {
+                islandMesh = mesh;
+                islandSlot = slot;
+                islandIds = UVIslands.Islands(mesh, slot);
+            }
+            return islandIds;
         }
 
         void MarkDirty()
@@ -660,6 +750,35 @@ namespace Malloc.ChannelPainter.Editor
         {
             if (!paint || target == null || canvas == null || session == null)
                 return;
+            if (tool == PaintTool.FillIsland)
+            {
+                HandleFillSceneGUI(view);
+                return;
+            }
+            HandleBrushSceneGUI(view);
+        }
+
+        void HandleFillSceneGUI(SceneView view)
+        {
+            Event evt = Event.current;
+            if (evt.alt)
+                return;
+            HandleUtility.AddDefaultControl(GUIUtility.GetControlID(FocusType.Passive));
+            if (evt.type == EventType.MouseMove ||
+                (evt.type == EventType.MouseDown && evt.button == 0))
+            {
+                if (UpdateSceneHit(evt, out _, out _, out RaycastHit hit) &&
+                    evt.type == EventType.MouseDown && hasHit)
+                    FillSceneTriangle(hit.triangleIndex);
+                view.Repaint();
+            }
+            if (evt.button == 0 && (evt.type == EventType.MouseDown ||
+                evt.type == EventType.MouseDrag || evt.type == EventType.MouseUp))
+                evt.Use();
+        }
+
+        void HandleBrushSceneGUI(SceneView view)
+        {
             Event evt = Event.current;
             if (HandleSceneMouseUp(evt))
                 return;
@@ -730,17 +849,17 @@ namespace Malloc.ChannelPainter.Editor
             Mesh mesh = TargetMesh;
             if (found && mesh != null && slot < mesh.subMeshCount)
             {
-                if (cachedHitMesh != mesh)
+                if (cachedHitMesh != mesh || cachedHitSlot != slot)
                 {
                     cachedHitMesh = mesh;
-                    cachedTriangles = mesh.triangles;
+                    cachedHitSlot = slot;
+                    cachedTriangles = mesh.GetTriangles(slot);
                     cachedUV = mesh.uv;
                 }
-                SubMeshDescriptor submesh = mesh.GetSubMesh(slot);
-                int first = hit.triangleIndex * 3;
-                if (first >= submesh.indexStart && first + 2 < submesh.indexStart + submesh.indexCount &&
-                    first + 2 < cachedTriangles.Length)
+                int triangle = SubmeshTriangle(mesh, hit.triangleIndex);
+                if (triangle >= 0)
                 {
+                    int first = triangle * 3;
                     Vector3 bary = hit.barycentricCoordinate;
                     hoverUV = cachedUV[cachedTriangles[first]] * bary.x +
                         cachedUV[cachedTriangles[first + 1]] * bary.y +
@@ -749,6 +868,79 @@ namespace Malloc.ChannelPainter.Editor
                 }
             }
             ChannelPainterUVWindow.Active?.Repaint();
+        }
+
+        int SubmeshTriangle(Mesh mesh, int wholeTriangle)
+        {
+            int first = 0;
+            for (int i = 0; i < slot; i++)
+                first += mesh.GetSubMesh(i).indexCount / 3;
+            int local = wholeTriangle - first;
+            return local >= 0 && local < mesh.GetSubMesh(slot).indexCount / 3 ? local : -1;
+        }
+
+        void FillSceneTriangle(int wholeTriangle)
+        {
+            Mesh mesh = TargetMesh;
+            if (mesh == null)
+                return;
+            int triangle = SubmeshTriangle(mesh, wholeTriangle);
+            if (triangle >= 0)
+                FillIsland(triangle);
+        }
+
+        internal void FillIslandAtUV(Vector2 point)
+        {
+            if (!paint || tool != PaintTool.FillIsland || canvas == null || session == null)
+                return;
+            Mesh mesh = TargetMesh;
+            if (mesh == null)
+                return;
+            Vector2[] uv = mesh.uv;
+            int[] triangles = mesh.GetTriangles(slot);
+            for (int triangle = 0; triangle < triangles.Length / 3; triangle++)
+            {
+                int first = triangle * 3;
+                Vector2 a = uv[triangles[first]];
+                Vector2 b = uv[triangles[first + 1]];
+                Vector2 c = uv[triangles[first + 2]];
+                float area = Cross(b - a, c - a);
+                if (Mathf.Abs(area) < 1e-10f)
+                    continue;
+                float u = Cross(b - point, c - point) / area;
+                float v = Cross(c - point, a - point) / area;
+                float w = 1f - u - v;
+                if (u >= -1e-6f && v >= -1e-6f && w >= -1e-6f)
+                {
+                    FillIsland(triangle);
+                    return;
+                }
+            }
+        }
+
+        static float Cross(Vector2 a, Vector2 b)
+        {
+            return a.x * b.y - a.y * b.x;
+        }
+
+        void FillIsland(int triangle)
+        {
+            Mesh mesh = TargetMesh;
+            int[] islands = GetIslands(mesh);
+            FillTriangles(UVIslands.Triangles(mesh, slot, islands, islands[triangle]));
+        }
+
+        void FillTriangles(int[] triangles)
+        {
+            if (canvas == null || session == null || TargetMesh == null)
+                return;
+            canvas.PushUndo();
+            canvas.Fill(TargetMesh, slot, triangles, value, ChannelMask);
+            MarkDirty();
+            UpdateVertexColors(true);
+            SceneView.RepaintAll();
+            ChannelPainterUVWindow.Active?.Repaint();
+            Repaint();
         }
 
         void ApplyStroke(Event evt, bool found, RaycastHit hit, Mesh mesh, Matrix4x4 matrix)
@@ -837,12 +1029,16 @@ namespace Malloc.ChannelPainter.Editor
             return output == PaintOutput.Map ? SaveMap() : BakeVertexColor();
         }
 
-        bool SaveMap()
+        bool SaveMap(bool saveAs = false)
         {
             if (canvas == null || !PaintMesh(out Mesh mesh, out _))
                 return false;
-            string path = EditorUtility.SaveFilePanelInProject("Save painted map", "ChannelPainter",
-                "png", "Save the painted control map.");
+            Texture2D assigned = PropertyTexture as Texture2D;
+            string path = assigned == null ? null : AssetDatabase.GetAssetPath(assigned);
+            if (saveAs || string.IsNullOrEmpty(path) ||
+                !path.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+                path = EditorUtility.SaveFilePanelInProject("Save painted map", "ChannelPainter",
+                    "png", "Save the painted control map.");
             if (string.IsNullOrEmpty(path))
                 return false;
 
@@ -866,7 +1062,7 @@ namespace Malloc.ChannelPainter.Editor
             importer.maxTextureSize = Mathf.Max(importer.maxTextureSize, canvas.Texture.width);
             importer.SaveAndReimport();
 
-            if (assignToMaterial)
+            if (assignToMaterial && !string.IsNullOrEmpty(propertyName))
             {
                 Material material = CurrentMaterial();
                 Undo.RecordObject(material, "Assign Channel Painter Map");

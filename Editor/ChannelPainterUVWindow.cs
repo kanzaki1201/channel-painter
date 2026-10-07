@@ -151,7 +151,7 @@ namespace Malloc.ChannelPainter.Editor
                 Handles.DrawLine(point + Vector3.up * 8, point + Vector3.down * 8);
             }
 
-            if (canvasRect.Contains(mouse))
+            if (canvasRect.Contains(mouse) && !main.IsFillIsland)
             {
                 Handles.color = Color.white;
                 float radius = brushRadius * canvasRect.width / main.Canvas.Texture.width;
@@ -245,12 +245,20 @@ namespace Malloc.ChannelPainter.Editor
                 evt.Use();
                 return;
             }
-            if (evt.button != 0 || !canvasRect.Contains(mouse))
+            if (evt.button != 0 || !canvasRect.Contains(mouse) || !main.IsPainting)
                 return;
-            painting = true;
             GUIUtility.hotControl = control;
             Focus();
-            main.PaintUV(PointToUV(mouse, canvasRect), brushRadius, true);
+            if (main.IsFillIsland)
+            {
+                main.FillIslandAtUV(PointToUV(mouse, canvasRect));
+                GUIUtility.hotControl = 0;
+            }
+            else
+            {
+                painting = true;
+                main.PaintUV(PointToUV(mouse, canvasRect), brushRadius, true);
+            }
             evt.Use();
             Repaint();
         }

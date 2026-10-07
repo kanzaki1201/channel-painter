@@ -144,5 +144,97 @@ namespace Malloc.ChannelPainter.Editor
                 Object.DestroyImmediate(quad);
             }
         }
+
+        [Test]
+        public void FillCoversSubtexelUvTriangle()
+        {
+            float low = 10.1f / 64f;
+            float high = 10.4f / 64f;
+            var sliver = new Mesh
+            {
+                vertices = new[] { Vector3.zero, Vector3.right, Vector3.up },
+                uv = new[] { new Vector2(0.2f, low), new Vector2(0.8f, low),
+                    new Vector2(0.5f, high) },
+                triangles = new[] { 0, 1, 2 }
+            };
+
+            try
+            {
+                using (var canvas = new PaintCanvas(64, Color.black))
+                {
+                    canvas.Fill(sliver, 0, null, 1, new Vector4(1, 0, 0, 0));
+                    Texture2D readback = canvas.ReadbackDilated(sliver, 0);
+                    try
+                    {
+                        Assert.That(readback.GetPixel(32, 10).r, Is.GreaterThan(0.5f));
+                    }
+                    finally
+                    {
+                        Object.DestroyImmediate(readback);
+                    }
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(sliver);
+            }
+        }
+
+        [Test]
+        public void SeparateUvQuadsHaveTwoIslands()
+        {
+            var mesh = new Mesh
+            {
+                vertices = new Vector3[8],
+                uv = new[]
+                {
+                    new Vector2(0, 0), new Vector2(0.4f, 0),
+                    new Vector2(0.4f, 1), new Vector2(0, 1),
+                    new Vector2(0.6f, 0), new Vector2(1, 0),
+                    new Vector2(1, 1), new Vector2(0.6f, 1)
+                },
+                triangles = new[] { 0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7 }
+            };
+            try
+            {
+                int[] islands = UVIslands.Islands(mesh, 0);
+                Assert.That(islands[0], Is.EqualTo(islands[1]));
+                Assert.That(islands[2], Is.EqualTo(islands[3]));
+                Assert.That(islands[0], Is.Not.EqualTo(islands[2]));
+                Assert.That(UVIslands.Triangles(mesh, 0, islands, islands[0]).Length, Is.EqualTo(6));
+            }
+            finally
+            {
+                Object.DestroyImmediate(mesh);
+            }
+        }
+
+        [Test]
+        public void QuadsWithMatchingUvEdgeShareAnIsland()
+        {
+            var mesh = new Mesh
+            {
+                vertices = new Vector3[8],
+                uv = new[]
+                {
+                    new Vector2(0, 0), new Vector2(0.5f, 0),
+                    new Vector2(0.5f, 1), new Vector2(0, 1),
+                    new Vector2(0.5f, 0), new Vector2(1, 0),
+                    new Vector2(1, 1), new Vector2(0.5f, 1)
+                },
+                triangles = new[] { 0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7 }
+            };
+            try
+            {
+                int[] islands = UVIslands.Islands(mesh, 0);
+                for (int i = 1; i < islands.Length; i++)
+                    Assert.That(islands[i], Is.EqualTo(islands[0]));
+                Assert.That(UVIslands.Triangles(mesh, 0, islands, islands[0]).Length, Is.EqualTo(12));
+            }
+            finally
+            {
+                Object.DestroyImmediate(mesh);
+            }
+        }
     }
 }

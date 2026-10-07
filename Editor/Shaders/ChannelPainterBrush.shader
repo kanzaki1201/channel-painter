@@ -51,6 +51,7 @@ Shader "Hidden/ChannelPainter/Brush"
 
         Pass
         {
+            Conservative True
             HLSLPROGRAM
             #pragma vertex Vert
             #pragma fragment Brush
@@ -87,6 +88,7 @@ Shader "Hidden/ChannelPainter/Brush"
 
         Pass
         {
+            Conservative True
             HLSLPROGRAM
             #pragma vertex Vert
             #pragma fragment Coverage
@@ -100,6 +102,7 @@ Shader "Hidden/ChannelPainter/Brush"
 
         Pass
         {
+            Conservative True
             HLSLPROGRAM
             #pragma vertex Vert
             #pragma fragment VertexColors
