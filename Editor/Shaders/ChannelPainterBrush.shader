@@ -67,13 +67,32 @@ Shader "Hidden/ChannelPainter/Brush"
             float2 _BrushCenterUV;
             float2 _CanvasSize;
             float _BrushMode;
+            float4x4 _ScreenViewProj;
+            float4x4 _ScreenView;
+            float2 _CursorViewport;
+            float2 _ScreenSize;
+            sampler2D _ScreenDepth;
 
             float4 Brush(Varyings input) : SV_Target
             {
                 float4 source = tex2D(_Source, input.uv);
-                float distanceToBrush = _BrushSpace > 0.5
-                    ? length((input.uv - _BrushCenterUV) * _CanvasSize)
-                    : distance(input.positionWS, _BrushCenter);
+                float distanceToBrush;
+                if (_BrushSpace > 1.5)
+                {
+                    float4 world = float4(input.positionWS, 1.0);
+                    float4 projected = mul(_ScreenViewProj, world);
+                    clip(projected.w);
+                    float2 viewport = projected.xy / projected.w * 0.5 + 0.5;
+                    clip(min(min(viewport.x, viewport.y), min(1.0 - viewport.x, 1.0 - viewport.y)));
+                    float eyeDepth = -mul(_ScreenView, world).z;
+                    float storedDepth = tex2D(_ScreenDepth, viewport).r;
+                    clip(storedDepth + max(0.001, 0.002 * eyeDepth) - eyeDepth);
+                    distanceToBrush = length((viewport - _CursorViewport) * _ScreenSize);
+                }
+                else if (_BrushSpace > 0.5)
+                    distanceToBrush = length((input.uv - _BrushCenterUV) * _CanvasSize);
+                else
+                    distanceToBrush = distance(input.positionWS, _BrushCenter);
                 float inner = _BrushHardness * _BrushRadius;
                 float falloff = _BrushHardness >= 1.0
                     ? step(distanceToBrush, _BrushRadius)
@@ -201,6 +220,40 @@ Shader "Hidden/ChannelPainter/Brush"
             {
                 float2 uv = tex2D(_VertexUV, input.uv).rg;
                 return tex2Dlod(_MainTex, float4(uv, 0.0, 0.0));
+            }
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Cull Off
+            ZTest LEqual
+            ZWrite On
+            HLSLPROGRAM
+            #pragma vertex DepthVertex
+            #pragma fragment DepthFragment
+
+            float4x4 _DepthViewProj;
+            float4x4 _ScreenView;
+
+            struct DepthVaryings
+            {
+                float4 positionCS : SV_POSITION;
+                float eyeDepth : TEXCOORD0;
+            };
+
+            DepthVaryings DepthVertex(Attributes input)
+            {
+                DepthVaryings output;
+                float4 world = mul(_BrushMatrix, input.positionOS);
+                output.positionCS = mul(_DepthViewProj, world);
+                output.eyeDepth = -mul(_ScreenView, world).z;
+                return output;
+            }
+
+            float DepthFragment(DepthVaryings input) : SV_Target
+            {
+                return input.eyeDepth;
             }
             ENDHLSL
         }

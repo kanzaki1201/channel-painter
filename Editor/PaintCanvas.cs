@@ -26,6 +26,7 @@ namespace Malloc.ChannelPainter.Editor
         readonly RenderTexture coverageNext;
         readonly RenderTexture dilated;
         readonly RenderTexture dilationNext;
+        RenderTexture screenDepth;
 
         public RenderTexture Texture { get; }
         // Dilated copy for display: bilinear sampling on sub-texel UV slivers reads the island fringe.
@@ -170,6 +171,66 @@ namespace Malloc.ChannelPainter.Editor
             properties.SetVector("_BrushCenterUV", centerUV);
             properties.SetVector("_CanvasSize", new Vector4(Texture.width, Texture.height, 0, 0));
             Paint(mesh, submesh, radiusPixels, hardness, strength, value, channelMask, properties);
+        }
+
+        public static Vector2 CursorViewport(Camera camera, Vector2 screenPixel)
+        {
+            Vector3 viewport = camera.ScreenToViewportPoint(new Vector3(screenPixel.x, screenPixel.y, 0));
+            return new Vector2(viewport.x, viewport.y);
+        }
+
+        public void PaintScreen(Mesh posedMesh, Matrix4x4 objectToWorld, int submesh, Camera camera,
+            Vector2 cursorViewport, float radiusPixels, float hardness, float strength, float value,
+            Vector4 channelMask)
+        {
+            int width = camera.pixelWidth;
+            int height = camera.pixelHeight;
+            if (width <= 0 || height <= 0)
+                return;
+
+            if (screenDepth == null || screenDepth.width != width || screenDepth.height != height)
+            {
+                if (screenDepth != null)
+                    Release(screenDepth);
+                screenDepth = new RenderTexture(width, height, 24, RenderTextureFormat.RFloat,
+                    RenderTextureReadWrite.Linear)
+                {
+                    useMipMap = false,
+                    autoGenerateMips = false,
+                    filterMode = FilterMode.Point,
+                    wrapMode = TextureWrapMode.Clamp
+                };
+                screenDepth.Create();
+            }
+
+            Matrix4x4 view = camera.worldToCameraMatrix;
+            var properties = new MaterialPropertyBlock();
+            properties.SetMatrix("_BrushMatrix", objectToWorld);
+            properties.SetMatrix("_ScreenView", view);
+            properties.SetMatrix("_DepthViewProj", GL.GetGPUProjectionMatrix(camera.projectionMatrix, true) * view);
+
+            var commands = new CommandBuffer { name = "Channel Painter Screen Depth" };
+            try
+            {
+                commands.SetRenderTarget(screenDepth);
+                commands.ClearRenderTarget(true, true, new Color(1e20f, 0, 0, 0),
+                    SystemInfo.usesReversedZBuffer ? 0f : 1f);
+                commands.SetViewport(new Rect(0, 0, width, height));
+                for (int i = 0; i < posedMesh.subMeshCount; i++)
+                    commands.DrawMesh(posedMesh, Matrix4x4.identity, brushMaterial, i, 6, properties);
+                Graphics.ExecuteCommandBuffer(commands);
+            }
+            finally
+            {
+                commands.Release();
+            }
+
+            properties.SetFloat("_BrushSpace", 2);
+            properties.SetMatrix("_ScreenViewProj", camera.projectionMatrix * view);
+            properties.SetVector("_CursorViewport", new Vector4(cursorViewport.x, cursorViewport.y, 0, 0));
+            properties.SetVector("_ScreenSize", new Vector4(width, height, 0, 0));
+            properties.SetTexture("_ScreenDepth", screenDepth);
+            Paint(posedMesh, submesh, radiusPixels, hardness, strength, value, channelMask, properties);
         }
 
         public void Fill(Mesh mesh, int submesh, int[] triangleIndices, float value, Vector4 channelMask)
@@ -366,6 +427,8 @@ namespace Malloc.ChannelPainter.Editor
         public void Dispose()
         {
             ClearUndo();
+            if (screenDepth != null)
+                Release(screenDepth);
             Release(Texture);
             Release(source);
             Release(coverage);

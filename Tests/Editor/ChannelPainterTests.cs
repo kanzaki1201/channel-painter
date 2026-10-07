@@ -62,6 +62,83 @@ namespace Malloc.ChannelPainter.Editor
         }
 
         [Test]
+        public void ScreenBrushPaintsOnlyTheVisibleSurface()
+        {
+            var cameraObject = new GameObject("Screen brush test camera");
+            var camera = cameraObject.AddComponent<Camera>();
+            var target = new RenderTexture(128, 128, 0);
+            var mesh = new Mesh
+            {
+                vertices = new[]
+                {
+                    new Vector3(0, 0, 1), new Vector3(1, 0, 1),
+                    new Vector3(1, 1, 1), new Vector3(0, 1, 1),
+                    new Vector3(-1, -1, 2), new Vector3(1, -1, 2),
+                    new Vector3(1, 1, 2), new Vector3(-1, 1, 2)
+                },
+                uv = new[]
+                {
+                    new Vector2(0, 0.5f), new Vector2(0.5f, 0.5f),
+                    new Vector2(0.5f, 1), new Vector2(0, 1),
+                    new Vector2(0.5f, 0), new Vector2(1, 0),
+                    new Vector2(1, 1), new Vector2(0.5f, 1)
+                },
+                subMeshCount = 2
+            };
+            mesh.SetTriangles(new[] { 0, 1, 2, 0, 2, 3 }, 0);
+            mesh.SetTriangles(new[] { 4, 5, 6, 4, 6, 7 }, 1);
+            camera.enabled = false;
+            camera.orthographic = true;
+            camera.orthographicSize = 1;
+            camera.nearClipPlane = 0.1f;
+            camera.farClipPlane = 10;
+            camera.targetTexture = target;
+            camera.aspect = 1;
+
+            try
+            {
+                Assert.That(camera.pixelWidth, Is.EqualTo(128));
+                Assert.That(camera.pixelHeight, Is.EqualTo(128));
+                using (var canvas = new PaintCanvas(128, Color.white))
+                {
+                    var mask = new Vector4(1, 0, 0, 0);
+                    Vector2 upper = PaintCanvas.CursorViewport(camera, new Vector2(88, 96));
+                    canvas.PaintScreen(mesh, Matrix4x4.identity, 0, camera, upper, 8, 1, 1, 0, mask);
+                    Texture2D first = canvas.ReadbackDilated(mesh, 0);
+                    try
+                    {
+                        Assert.That(first.GetPixelBilinear(0.1875f, 0.75f).r, Is.LessThan(0.1f));
+                        Assert.That(first.GetPixelBilinear(0.84375f, 0.75f).r, Is.GreaterThan(0.9f));
+                    }
+                    finally
+                    {
+                        Object.DestroyImmediate(first);
+                    }
+
+                    Vector2 lower = PaintCanvas.CursorViewport(camera, new Vector2(40, 32));
+                    canvas.PaintScreen(mesh, Matrix4x4.identity, 1, camera, lower, 8, 1, 1, 0, mask);
+                    Texture2D second = canvas.ReadbackDilated(mesh, 1);
+                    try
+                    {
+                        Assert.That(second.GetPixelBilinear(0.65625f, 0.25f).r, Is.LessThan(0.1f));
+                    }
+                    finally
+                    {
+                        Object.DestroyImmediate(second);
+                    }
+                }
+            }
+            finally
+            {
+                camera.targetTexture = null;
+                target.Release();
+                Object.DestroyImmediate(target);
+                Object.DestroyImmediate(mesh);
+                Object.DestroyImmediate(cameraObject);
+            }
+        }
+
+        [Test]
         public void GpuDilationExtendsPaintAtIslandEdge()
         {
             var quad = new Mesh

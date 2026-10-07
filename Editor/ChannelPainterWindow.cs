@@ -13,6 +13,7 @@ namespace Malloc.ChannelPainter.Editor
     public sealed class ChannelPainterWindow : EditorWindow
     {
         enum PaintTool { Brush, FillIsland }
+        enum BrushSpace { World, Screen }
 
         static readonly int[] Sizes = { 512, 1024, 2048, 4096 };
         static readonly string[] SizeLabels = { "512", "1024", "2048", "4096" };
@@ -20,8 +21,11 @@ namespace Malloc.ChannelPainter.Editor
         static readonly string[] MaskSourceLabels = { "Canvas", "Vertex Color" };
         static readonly string[] ViewLabels = { "RGBA", "R", "G", "B", "A" };
         static readonly string[] ToolLabels = { "Brush", "Fill Island" };
+        static readonly string[] BrushSpaceLabels = { "World", "Screen" };
         const float MinRadius = 0.001f;
         const float MaxRadius = 1f;
+        const float MinScreenRadius = 2f;
+        const float MaxScreenRadius = 512f;
         const string ReloadPath = "Temp/ChannelPainter/canvas.raw";
         static readonly MethodInfo IntersectRayMesh = typeof(HandleUtility).GetMethod(
             "IntersectRayMesh", BindingFlags.Static | BindingFlags.NonPublic, null,
@@ -36,6 +40,8 @@ namespace Malloc.ChannelPainter.Editor
         [SerializeField] Color fill = Color.white;
         [SerializeField] float value = 1;
         [SerializeField] float radius = 0.1f;
+        [SerializeField] float screenRadius = 40f;
+        [SerializeField] BrushSpace brushSpace;
         [SerializeField] float hardness = 0.5f;
         [SerializeField] float strength = 1;
         [SerializeField] BrushBlend blend;
@@ -438,14 +444,7 @@ namespace Malloc.ChannelPainter.Editor
                 new GUIContent("Blend", "Replace sets the value. Add and Subtract change the current value by Value."), blend);
             value = EditorGUILayout.Slider("Value", value, 0, 1);
             if (tool == PaintTool.Brush)
-            {
-                radius = EditorGUILayout.Slider(new GUIContent("Radius (world units)", "[ and ] in the scene view."),
-                    radius, MinRadius, MaxRadius);
-                hardness = EditorGUILayout.Slider("Hardness", hardness, 0, 1);
-                strength = EditorGUILayout.Slider("Strength", strength, 0, 1);
-                pressureStrength = EditorGUILayout.Toggle("Pen Pressure → Strength", pressureStrength);
-                pressureSize = EditorGUILayout.Toggle("Pen Pressure → Size", pressureSize);
-            }
+                DrawBrushSettings();
             using (new EditorGUILayout.HorizontalScope())
             {
                 EditorGUILayout.PrefixLabel("Paint On Channels");
@@ -476,6 +475,28 @@ namespace Malloc.ChannelPainter.Editor
                         ChannelPainterUVWindow.Active?.Repaint();
                     }
             }
+        }
+
+        void DrawBrushSettings()
+        {
+            BrushSpace chosenSpace = (BrushSpace)EditorGUILayout.Popup("Brush Space", (int)brushSpace, BrushSpaceLabels);
+            if (chosenSpace != brushSpace)
+            {
+                brushSpace = chosenSpace;
+                hasHit = false;
+                hasHoverUV = false;
+                ChannelPainterUVWindow.Active?.Repaint();
+            }
+            if (brushSpace == BrushSpace.Screen)
+                screenRadius = EditorGUILayout.Slider("Screen Radius (px)", screenRadius,
+                    MinScreenRadius, MaxScreenRadius);
+            else
+                radius = EditorGUILayout.Slider(new GUIContent("Radius (world units)", "[ and ] in the scene view."),
+                    radius, MinRadius, MaxRadius);
+            hardness = EditorGUILayout.Slider("Hardness", hardness, 0, 1);
+            strength = EditorGUILayout.Slider("Strength", strength, 0, 1);
+            pressureStrength = EditorGUILayout.Toggle("Pen Pressure → Strength", pressureStrength);
+            pressureSize = EditorGUILayout.Toggle("Pen Pressure → Size", pressureSize);
         }
 
         void DrawCanvasSettings()
@@ -920,6 +941,11 @@ namespace Malloc.ChannelPainter.Editor
             HandleUtility.AddDefaultControl(GUIUtility.GetControlID(FocusType.Passive));
             if (HandleSceneKey(evt, view))
                 return;
+            if (brushSpace == BrushSpace.Screen)
+            {
+                HandleScreenBrushSceneGUI(view, evt);
+                return;
+            }
             if (evt.type == EventType.Repaint && hasHit)
             {
                 Handles.color = BlendColor;
@@ -939,6 +965,47 @@ namespace Malloc.ChannelPainter.Editor
             ApplyStroke(evt, hasHit, hit, mesh, matrix);
         }
 
+        void HandleScreenBrushSceneGUI(SceneView view, Event evt)
+        {
+            if (evt.type == EventType.Repaint)
+            {
+                Handles.BeginGUI();
+                Handles.color = BlendColor;
+                Handles.DrawWireDisc(evt.mousePosition, Vector3.forward,
+                    screenRadius / EditorGUIUtility.pixelsPerPoint);
+                Handles.color = Color.white;
+                Handles.EndGUI();
+                return;
+            }
+            if (evt.type == EventType.MouseMove)
+            {
+                view.Repaint();
+                return;
+            }
+            if ((evt.type != EventType.MouseDown && evt.type != EventType.MouseDrag) || evt.button != 0)
+                return;
+            if (!PaintMesh(out Mesh mesh, out Matrix4x4 matrix))
+                return;
+            if (evt.type == EventType.MouseDown)
+                strokeSnapshotTaken = false;
+            if (!strokeSnapshotTaken)
+            {
+                canvas.PushUndo();
+                strokeSnapshotTaken = true;
+            }
+            Vector2 pressured = Pressured(strength, screenRadius, PenPressure(evt), pressureStrength, pressureSize);
+            Vector2 screenPixel = HandleUtility.GUIPointToScreenPixelCoordinate(evt.mousePosition);
+            canvas.BlendMode = blend;
+            canvas.PaintScreen(mesh, matrix, slot, view.camera, PaintCanvas.CursorViewport(view.camera, screenPixel),
+                pressured.y, hardness, pressured.x, value, ChannelMask);
+            MarkDirty();
+            UpdateVertexColors(false);
+            SceneView.RepaintAll();
+            ChannelPainterUVWindow.Active?.Repaint();
+            Repaint();
+            evt.Use();
+        }
+
         bool HandleSceneMouseUp(Event evt)
         {
             if (evt.type != EventType.MouseUp || evt.button != 0 || !strokeSnapshotTaken)
@@ -954,7 +1021,10 @@ namespace Malloc.ChannelPainter.Editor
                 (evt.keyCode != KeyCode.LeftBracket && evt.keyCode != KeyCode.RightBracket))
                 return false;
             float step = evt.keyCode == KeyCode.RightBracket ? 1.15f : 1 / 1.15f;
-            radius = Mathf.Clamp(radius * step, MinRadius, MaxRadius);
+            if (brushSpace == BrushSpace.Screen)
+                screenRadius = Mathf.Clamp(screenRadius * step, MinScreenRadius, MaxScreenRadius);
+            else
+                radius = Mathf.Clamp(radius * step, MinRadius, MaxRadius);
             evt.Use();
             Repaint();
             view.Repaint();
