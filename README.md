@@ -129,7 +129,7 @@ These work only while painting. Rebind them under **Edit > Shortcuts > Channel P
 
 While painting, a status box in the Scene view shows the tool, blend, and channels.
 
-The brush circle is white for Replace, green for Add, and red for Subtract.
+The brush circle is light blue for Replace, green for Add, and red for Subtract, with a dark outline so it shows on light backgrounds too.
 
 ## Unsaved paint
 

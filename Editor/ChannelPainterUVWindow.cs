@@ -159,9 +159,8 @@ namespace Malloc.ChannelPainter.Editor
 
             if (canvasRect.Contains(mouse) && !main.IsFillIsland)
             {
-                Handles.color = main.BlendColor;
                 float radius = brushRadius * canvasRect.width / main.Canvas.Texture.width;
-                Handles.DrawWireDisc(mouse, Vector3.forward, radius);
+                ChannelPainterWindow.DrawBrushCircle(mouse, Vector3.forward, radius, main.BlendColor);
             }
             Handles.color = Color.white;
             Handles.EndGUI();

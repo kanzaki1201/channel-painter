@@ -90,7 +90,7 @@ namespace Malloc.ChannelPainter.Editor
         internal int TargetSlot => slot;
         internal bool IsPainting => paint;
         internal Color BlendColor => blend == BrushBlend.Add ? new Color(0.35f, 1f, 0.45f)
-            : blend == BrushBlend.Subtract ? new Color(1f, 0.4f, 0.4f) : Color.white;
+            : blend == BrushBlend.Subtract ? new Color(1f, 0.4f, 0.4f) : new Color(0.35f, 0.75f, 1f);
         internal string StatusText => "Channel Painter  |  " + (tool == PaintTool.FillIsland ? "Fill Island" : "Brush") +
             "  |  " + blend + "  |  " + ChannelText + "  (A add, S subtract, R replace, 1-4 toggle RGBA)";
         string ChannelText
@@ -140,6 +140,16 @@ namespace Malloc.ChannelPainter.Editor
             Repaint();
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
+        }
+
+        // A dark outline under the colored circle keeps it visible on light and dark backgrounds.
+        internal static void DrawBrushCircle(Vector3 center, Vector3 normal, float radius, Color color)
+        {
+            Handles.color = new Color(0, 0, 0, 0.85f);
+            Handles.DrawWireDisc(center, normal, radius, 4f);
+            Handles.color = color;
+            Handles.DrawWireDisc(center, normal, radius, 2f);
+            Handles.color = Color.white;
         }
 
         void SetBlend(BrushBlend next)
@@ -1005,9 +1015,7 @@ namespace Malloc.ChannelPainter.Editor
             }
             if (evt.type == EventType.Repaint && hasHit)
             {
-                Handles.color = BlendColor;
-                Handles.DrawWireDisc(hitPoint, hitNormal, radius);
-                Handles.color = Color.white;
+                DrawBrushCircle(hitPoint, hitNormal, radius, BlendColor);
             }
             if (evt.type != EventType.MouseMove && evt.type != EventType.MouseDown &&
                 evt.type != EventType.MouseDrag)
@@ -1027,10 +1035,8 @@ namespace Malloc.ChannelPainter.Editor
             if (evt.type == EventType.Repaint)
             {
                 Handles.BeginGUI();
-                Handles.color = BlendColor;
-                Handles.DrawWireDisc(evt.mousePosition, Vector3.forward,
-                    screenRadius / EditorGUIUtility.pixelsPerPoint);
-                Handles.color = Color.white;
+                DrawBrushCircle(evt.mousePosition, Vector3.forward,
+                    screenRadius / EditorGUIUtility.pixelsPerPoint, BlendColor);
                 Handles.EndGUI();
                 return;
             }
