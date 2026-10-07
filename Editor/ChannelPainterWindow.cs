@@ -278,6 +278,12 @@ namespace Malloc.ChannelPainter.Editor
             DrawPaintSettings();
             DrawViewSettings();
             DrawSaveSettings();
+            if (session != null && session.Detached)
+            {
+                EditorGUILayout.HelpBox("Another tool replaced the mesh on this renderer, so the live preview no longer shows. Restart the session on the new mesh.", MessageType.Warning);
+                if (GUILayout.Button("Restart Session On Current Mesh"))
+                    ChangeSelection(NewCanvas);
+            }
             if (session != null && session.IsVertexColor)
                 EditorGUILayout.HelpBox("End the Vertex color session before Apply Overrides or dragging this object into the Project window.", MessageType.Warning);
         }

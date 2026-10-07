@@ -435,5 +435,19 @@ namespace Malloc.ChannelPainter.Editor
                 Object.DestroyImmediate(quad);
             }
         }
+
+        [Test]
+        public void MergeClampsChannelsToTheControlRange()
+        {
+            Color result = VertexColorBake.Merge(
+                new Color(1.07f, -0.1f, 0.5f, 0.5f),
+                new Color(-0.07f, 0.3f, 1.2f, 0.5f),
+                new Vector4(1, 0, 1, 0));
+
+            Assert.That(result.r, Is.EqualTo(0f));
+            Assert.That(result.g, Is.EqualTo(0f));
+            Assert.That(result.b, Is.EqualTo(1f));
+            Assert.That(result.a, Is.EqualTo(0.5f));
+        }
     }
 }

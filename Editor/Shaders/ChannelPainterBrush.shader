@@ -135,7 +135,8 @@ Shader "Hidden/ChannelPainter/Brush"
 
             float4 VertexColors(Varyings input) : SV_Target
             {
-                return _HasVertexColor > 0.5 ? input.color : float4(1.0, 1.0, 1.0, 1.0);
+                // Conservative rasterization extrapolates the color past the triangle, so clamp to the control range.
+                return _HasVertexColor > 0.5 ? saturate(input.color) : float4(1.0, 1.0, 1.0, 1.0);
             }
             ENDHLSL
         }

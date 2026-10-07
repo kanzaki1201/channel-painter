@@ -112,8 +112,15 @@ namespace Malloc.ChannelPainter.Editor
             return true;
         }
 
+        Mesh CurrentMesh => skinned != null ? skinned.sharedMesh : filter != null ? filter.sharedMesh : null;
+
+        // Another tool replaced the temporary mesh on the renderer; the session must not put its original back over that.
+        internal bool Detached => IsVertexColor && !ended && !saving && renderer != null && CurrentMesh != temporaryMesh;
+
         void RestoreOriginalForSave()
         {
+            if (CurrentMesh != temporaryMesh)
+                return;
             SetMesh(OriginalMesh);
             Object component = skinned != null ? (Object)skinned : filter;
             if (PrefabUtility.IsPartOfPrefabInstance(component))
@@ -176,7 +183,7 @@ namespace Malloc.ChannelPainter.Editor
                 EditorSceneManager.sceneSaved -= OnSceneSaved;
                 PrefabStage.prefabSaving -= OnPrefabSaving;
                 PrefabStage.prefabSaved -= OnPrefabSaved;
-                if (renderer != null)
+                if (renderer != null && CurrentMesh == temporaryMesh)
                     SetMesh(OriginalMesh);
                 if (temporaryMesh != null)
                     Object.DestroyImmediate(temporaryMesh);

@@ -9,11 +9,12 @@ namespace Malloc.ChannelPainter.Editor
     {
         public static Color Merge(Color existing, Color painted, Vector4 mask)
         {
+            // Control channels stay in 0..1; this also cleans values left by earlier bakes.
             return new Color(
-                mask.x > 0.5f ? painted.r : existing.r,
-                mask.y > 0.5f ? painted.g : existing.g,
-                mask.z > 0.5f ? painted.b : existing.b,
-                mask.w > 0.5f ? painted.a : existing.a);
+                Mathf.Clamp01(mask.x > 0.5f ? painted.r : existing.r),
+                Mathf.Clamp01(mask.y > 0.5f ? painted.g : existing.g),
+                Mathf.Clamp01(mask.z > 0.5f ? painted.b : existing.b),
+                Mathf.Clamp01(mask.w > 0.5f ? painted.a : existing.a));
         }
 
         public static Mesh Bake(Mesh original, Color[] mergedColors)
