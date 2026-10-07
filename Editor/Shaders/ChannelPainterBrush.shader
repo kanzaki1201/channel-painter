@@ -257,5 +257,24 @@ Shader "Hidden/ChannelPainter/Brush"
             }
             ENDHLSL
         }
+
+        Pass
+        {
+            HLSLPROGRAM
+            #pragma vertex vert_img
+            #pragma fragment CopyChannel
+
+            sampler2D _MainTex;
+            float4 _FromMask;
+            float4 _ToMask;
+
+            float4 CopyChannel(v2f_img input) : SV_Target
+            {
+                float4 color = tex2D(_MainTex, input.uv);
+                float value = dot(color, _FromMask);
+                return lerp(color, float4(value, value, value, value), _ToMask);
+            }
+            ENDHLSL
+        }
     }
 }

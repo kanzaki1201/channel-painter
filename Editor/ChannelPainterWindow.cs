@@ -19,6 +19,7 @@ namespace Malloc.ChannelPainter.Editor
         static readonly string[] SizeLabels = { "512", "1024", "2048", "4096" };
         static readonly string[] OutputLabels = { "Map", "Vertex color" };
         static readonly string[] MaskSourceLabels = { "Canvas", "Vertex Color" };
+        static readonly string[] ChannelNames = { "R", "G", "B", "A" };
         static readonly string[] ViewLabels = { "RGBA", "R", "G", "B", "A" };
         static readonly string[] ToolLabels = { "Brush", "Fill Island" };
         static readonly string[] BrushSpaceLabels = { "World", "Screen" };
@@ -55,6 +56,8 @@ namespace Malloc.ChannelPainter.Editor
         [SerializeField] PaintTool tool;
         [SerializeField] bool showMask;
         [SerializeField] bool maskVertexColor;
+        [SerializeField] int copyFrom;
+        [SerializeField] int copyTo = 1;
         [SerializeField] bool dirtyFlag;
         [SerializeField] int viewChannel;
         [SerializeField] PaintOutput output;
@@ -554,6 +557,24 @@ namespace Malloc.ChannelPainter.Editor
                 "Replace the canvas with the vertex colors of the original mesh.")))
                 ChangeSelection(NewCanvas);
 
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.PrefixLabel(new GUIContent("Copy Channel", "Copy one channel of the canvas into another."));
+                copyFrom = EditorGUILayout.Popup(copyFrom, ChannelNames, GUILayout.Width(40));
+                GUILayout.Label("→", GUILayout.Width(16));
+                copyTo = EditorGUILayout.Popup(copyTo, ChannelNames, GUILayout.Width(40));
+                using (new EditorGUI.DisabledScope(canvas == null || copyFrom == copyTo))
+                    if (GUILayout.Button("Copy"))
+                    {
+                        canvas.PushUndo();
+                        canvas.CopyChannel(copyFrom, copyTo);
+                        MarkDirty();
+                        UpdateVertexColors(true);
+                        SceneView.RepaintAll();
+                        ChannelPainterUVWindow.Active?.Repaint();
+                        GUIUtility.ExitGUI();
+                    }
+            }
             if (GUILayout.Button(new GUIContent("Load Texture...", "Pick any texture and copy it into the canvas.")))
             {
                 pickerId = GUIUtility.GetControlID(FocusType.Passive);

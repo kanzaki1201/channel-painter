@@ -391,5 +391,49 @@ namespace Malloc.ChannelPainter.Editor
                 Object.DestroyImmediate(quad);
             }
         }
+
+        [Test]
+        public void CopyChannelCopiesOneChannelIntoAnother()
+        {
+            var quad = new Mesh
+            {
+                vertices = new[]
+                {
+                    new Vector3(0, 0, 0), new Vector3(1, 0, 0),
+                    new Vector3(1, 1, 0), new Vector3(0, 1, 0)
+                },
+                uv = new[]
+                {
+                    new Vector2(0, 0), new Vector2(1, 0),
+                    new Vector2(1, 1), new Vector2(0, 1)
+                },
+                triangles = new[] { 0, 1, 2, 0, 2, 3 }
+            };
+            try
+            {
+                using (var canvas = new PaintCanvas(64, new Color(0.2f, 0.4f, 0.6f, 0.8f)))
+                {
+                    canvas.CopyChannel(2, 0);
+                    Texture2D readback = canvas.ReadbackDilated(quad, 0);
+                    try
+                    {
+                        Color texel = readback.GetPixelBilinear(0.5f, 0.5f);
+                        Assert.That(texel.r, Is.EqualTo(0.6f).Within(0.01f));
+                        Assert.That(texel.g, Is.EqualTo(0.4f).Within(0.01f));
+                        Assert.That(texel.b, Is.EqualTo(0.6f).Within(0.01f));
+                        Assert.That(texel.a, Is.EqualTo(0.8f).Within(0.01f));
+                        Assert.That(canvas.PaintedChannels, Is.EqualTo(new Vector4(1, 0, 0, 0)));
+                    }
+                    finally
+                    {
+                        Object.DestroyImmediate(readback);
+                    }
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(quad);
+            }
+        }
     }
 }

@@ -140,6 +140,20 @@ namespace Malloc.ChannelPainter.Editor
             snapshotMasks.RemoveAt(0);
         }
 
+        // Copies one channel into another across the whole canvas. Channels: 0 R, 1 G, 2 B, 3 A.
+        public void CopyChannel(int from, int to)
+        {
+            Vector4 fromMask = Vector4.zero;
+            Vector4 toMask = Vector4.zero;
+            fromMask[from] = 1;
+            toMask[to] = 1;
+            Graphics.Blit(Texture, source);
+            brushMaterial.SetVector("_FromMask", fromMask);
+            brushMaterial.SetVector("_ToMask", toMask);
+            Graphics.Blit(source, Texture, brushMaterial, 7);
+            PaintedChannels = Vector4.Max(PaintedChannels, toMask);
+        }
+
         public void Undo()
         {
             if (!CanUndo)

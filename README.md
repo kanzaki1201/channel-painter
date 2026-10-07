@@ -63,6 +63,7 @@ Or clone the repository into your project's `Packages/` folder.
 | New Canvas | Map output only. Starts a canvas filled with Fill Color. |
 | Load `<property>` From Material | Map output only. Replaces the canvas with the assigned map. |
 | Reset To Mesh Colors | Vertex color output only. Replaces the canvas with the mesh's vertex colors. |
+| Copy Channel | Copies one canvas channel into another, for example B → R. Undo reverts it. |
 | Load Texture... | Opens the object picker and copies the picked texture into the canvas |
 
 ### Paint
