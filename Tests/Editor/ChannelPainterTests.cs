@@ -289,5 +289,30 @@ namespace Malloc.ChannelPainter.Editor
                 Object.DestroyImmediate(quad);
             }
         }
+
+        [Test]
+        public void BrushOffTheEdgeCentersNearTheNearestVertex()
+        {
+            var quad = new Mesh
+            {
+                vertices = new[]
+                {
+                    new Vector3(0, 0, 0), new Vector3(1, 0, 0),
+                    new Vector3(1, 1, 0), new Vector3(0, 1, 0)
+                },
+                triangles = new[] { 0, 1, 2, 0, 2, 3 }
+            };
+            try
+            {
+                var ray = new Ray(new Vector3(1.2f, 1f, -5), Vector3.forward);
+                Assert.That(ChannelPainterWindow.NearestOnRay(ray, quad, Matrix4x4.identity, 0.3f, out Vector3 center), Is.True);
+                Assert.That(Vector3.Distance(center, new Vector3(1.2f, 1f, 0)), Is.LessThan(1e-4f));
+                Assert.That(ChannelPainterWindow.NearestOnRay(ray, quad, Matrix4x4.identity, 0.1f, out _), Is.False);
+            }
+            finally
+            {
+                Object.DestroyImmediate(quad);
+            }
+        }
     }
 }

@@ -929,7 +929,7 @@ namespace Malloc.ChannelPainter.Editor
             if (evt.type != EventType.MouseMove && evt.type != EventType.MouseDown &&
                 evt.type != EventType.MouseDrag)
                 return;
-            if (!UpdateSceneHit(evt, out Mesh mesh, out Matrix4x4 matrix, out RaycastHit hit))
+            if (!UpdateSceneHit(evt, out Mesh mesh, out Matrix4x4 matrix, out RaycastHit hit, true))
                 return;
             if (evt.type == EventType.MouseMove)
             {
@@ -961,7 +961,7 @@ namespace Malloc.ChannelPainter.Editor
             return true;
         }
 
-        bool UpdateSceneHit(Event evt, out Mesh mesh, out Matrix4x4 matrix, out RaycastHit hit)
+        bool UpdateSceneHit(Event evt, out Mesh mesh, out Matrix4x4 matrix, out RaycastHit hit, bool allowNearMiss = false)
         {
             hit = default;
             if (!PaintMesh(out mesh, out matrix))
@@ -970,14 +970,46 @@ namespace Malloc.ChannelPainter.Editor
                 hasHoverUV = false;
                 return false;
             }
-            hasHit = RayHit(HandleUtility.GUIPointToWorldRay(evt.mousePosition), mesh, matrix, out hit);
-            if (hasHit)
+            Ray ray = HandleUtility.GUIPointToWorldRay(evt.mousePosition);
+            bool onMesh = RayHit(ray, mesh, matrix, out hit);
+            hasHit = onMesh;
+            if (onMesh)
             {
                 hitPoint = hit.point;
                 hitNormal = hit.normal;
             }
-            UpdateHoverUV(hasHit, hit);
+            else if (allowNearMiss && NearestOnRay(ray, mesh, matrix, radius, out Vector3 center))
+            {
+                hasHit = true;
+                hitPoint = center;
+                hitNormal = -ray.direction;
+            }
+            UpdateHoverUV(onMesh, hit);
             return true;
+        }
+
+        // Off the mesh, the brush centers on the ray at the depth of the vertex nearest to it,
+        // so a brush over the silhouette still reaches the border texels.
+        public static bool NearestOnRay(Ray ray, Mesh mesh, Matrix4x4 matrix, float radius, out Vector3 center)
+        {
+            center = default;
+            float best = radius * radius;
+            bool found = false;
+            foreach (Vector3 vertex in mesh.vertices)
+            {
+                Vector3 world = matrix.MultiplyPoint3x4(vertex);
+                float along = Vector3.Dot(world - ray.origin, ray.direction);
+                if (along < 0)
+                    continue;
+                Vector3 onRay = ray.origin + ray.direction * along;
+                float distance = (world - onRay).sqrMagnitude;
+                if (distance > best)
+                    continue;
+                best = distance;
+                center = onRay;
+                found = true;
+            }
+            return found;
         }
 
         void UpdateHoverUV(bool found, RaycastHit hit)
@@ -1096,7 +1128,7 @@ namespace Malloc.ChannelPainter.Editor
                 }
                 Vector2 pressured = Pressured(strength, radius, PenPressure(evt), pressureStrength, pressureSize);
                 canvas.BlendMode = blend;
-                canvas.Paint(mesh, matrix, slot, hit.point, pressured.y, hardness, pressured.x, value, ChannelMask);
+                canvas.Paint(mesh, matrix, slot, hitPoint, pressured.y, hardness, pressured.x, value, ChannelMask);
                 MarkDirty();
                 UpdateVertexColors(false);
                 SceneView.RepaintAll();
