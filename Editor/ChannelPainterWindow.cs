@@ -1228,6 +1228,19 @@ namespace Malloc.ChannelPainter.Editor
                     canvas = new PaintCanvas(Sizes[sizeIndex], fill);
                 canvas.LoadVertexColors(SharedMesh(), slot);
             }
+            else
+            {
+                // The vertex color canvas must never reach the map property, so Map starts from the assigned map.
+                ReleaseCanvas();
+                Texture assigned = PropertyTexture;
+                if (assigned != null)
+                {
+                    canvas = new PaintCanvas(Sizes[sizeIndex], fill);
+                    canvas.Load(assigned);
+                }
+                else
+                    paint = false;
+            }
             SyncCanvasState();
             StartSession();
             UpdateVertexColors(true);
