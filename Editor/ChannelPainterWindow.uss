@@ -195,8 +195,8 @@
 }
 
 .cp-root .cp-row .cp-channel-a.cp-on {
-    background-color: rgb(128, 128, 128);
-    border-color: rgb(92, 92, 92);
+    background-color: rgb(150, 90, 210);
+    border-color: rgb(110, 60, 160);
 }
 
 /* Eyedropper and swatches */

@@ -55,7 +55,7 @@ A section shows only the controls that the current output and tool use.
 |---|---|
 | Target | The renderer to paint |
 | Material Slot | The submesh and material to paint |
-| Output | Map or Vertex color |
+| Output | **Map** or **Vertex color** buttons |
 | Texture Property | Map output only. The texture slot that shows the canvas. |
 
 ### Canvas
@@ -65,10 +65,9 @@ A section shows only the controls that the current output and tool use.
 | Size | Canvas resolution: 512, 1024, 2048, or 4096 |
 | Fill Color | Map output only. The color of a new canvas. |
 | New Canvas | Map output only. Starts a canvas filled with Fill Color. |
-| Load `<property>` From Material | Map output only. Replaces the canvas with the assigned map. |
+| Import `<property>` From Material | Map output only. Replaces the canvas with the assigned map. |
 | Reset To Mesh Colors | Vertex color output only. Replaces the canvas with the mesh's vertex colors. |
-| Copy Channel | Copies one canvas channel into another, for example B → R. Undo reverts it. |
-| Load Texture... | Opens the object picker and copies the picked texture into the canvas |
+| Import Texture... | Opens the object picker and copies the picked texture into the canvas |
 
 ### Paint
 
@@ -84,7 +83,7 @@ A section shows only the controls that the current output and tool use.
 | Color | Color mode. Opens Unity's color picker. In Add and Subtract, each channel of the color is the amount for that channel. |
 | Eyedropper | Picks from the canvas with the next left click (see below) |
 | Recent Colors | Color mode. The last 8 colors that a stroke or fill used. Click one to paint with it. |
-| Brush Space | Brush tool. **World**: a sphere around the point under the cursor. **Screen**: a circle on screen that paints only the front-most surface of the target. |
+| Brush Space | Brush tool. **World**: a sphere around the point under the cursor. **Screen** (default): a circle on screen that paints only the front-most surface of the target. |
 | Radius (world units) / Screen Radius (px) | Brush tool. Brush size. |
 | Hardness | Brush tool. How much of the radius paints at full strength before the edge falloff. |
 | Strength | Brush tool. How strongly each brush step applies. |
@@ -105,6 +104,14 @@ In Color mode it sets Color.
 In Channel Value mode it sets Value from the first enabled channel.
 One click picks and turns the eyedropper off.
 Click the button again to cancel.
+
+### Channel Tools
+
+Collapsed by default.
+
+| Control | Use |
+|---|---|
+| Copy Channel | Copies one canvas channel into another, for example B → R. Undo reverts it. |
 
 ### View
 

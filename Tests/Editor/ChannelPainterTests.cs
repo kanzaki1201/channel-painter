@@ -6,6 +6,21 @@ namespace Malloc.ChannelPainter.Editor
     public class ChannelPainterTests
     {
         [Test]
+        public void StamperFillsTheDragAtEvenSpacing()
+        {
+            var stamps = new System.Collections.Generic.List<Vector3>();
+            var stamper = new ChannelPainterWindow.StrokeStamper();
+            stamper.Begin();
+            stamper.Stamp(Vector3.zero, 1, 1, (position, pressure) => stamps.Add(position));
+            stamper.Stamp(new Vector3(3.5f, 0, 0), 1, 1, (position, pressure) => stamps.Add(position));
+            stamper.Stamp(new Vector3(4.2f, 0, 0), 1, 1, (position, pressure) => stamps.Add(position));
+
+            Assert.That(stamps.Count, Is.EqualTo(5));
+            for (int i = 0; i < stamps.Count; i++)
+                Assert.That(stamps[i].x, Is.EqualTo(i).Within(1e-4f));
+        }
+
+        [Test]
         public void MergeChangesOnlyMaskedChannels()
         {
             Color result = VertexColorBake.Merge(
@@ -103,6 +118,7 @@ namespace Malloc.ChannelPainter.Editor
                 {
                     var mask = new Vector4(1, 0, 0, 0);
                     Vector2 upper = PaintCanvas.CursorViewport(camera, new Vector2(88, 96));
+                    canvas.RenderScreenDepth(mesh, Matrix4x4.identity, camera);
                     canvas.PaintScreen(mesh, Matrix4x4.identity, 0, camera, upper, 8, 1, 1, Vector4.zero, mask);
                     Texture2D first = canvas.ReadbackDilated(mesh, 0);
                     try
@@ -116,6 +132,7 @@ namespace Malloc.ChannelPainter.Editor
                     }
 
                     Vector2 lower = PaintCanvas.CursorViewport(camera, new Vector2(40, 32));
+                    canvas.RenderScreenDepth(mesh, Matrix4x4.identity, camera);
                     canvas.PaintScreen(mesh, Matrix4x4.identity, 1, camera, lower, 8, 1, 1, Vector4.zero, mask);
                     Texture2D second = canvas.ReadbackDilated(mesh, 1);
                     try

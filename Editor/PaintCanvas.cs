@@ -193,9 +193,8 @@ namespace Malloc.ChannelPainter.Editor
             return new Vector2(viewport.x, viewport.y);
         }
 
-        public void PaintScreen(Mesh posedMesh, Matrix4x4 objectToWorld, int submesh, Camera camera,
-            Vector2 cursorViewport, float radiusPixels, float hardness, float strength, Vector4 value,
-            Vector4 channelMask)
+        // The camera and the mesh hold still during a stroke, so the depth pass runs once per stroke.
+        public void RenderScreenDepth(Mesh posedMesh, Matrix4x4 objectToWorld, Camera camera)
         {
             int width = camera.pixelWidth;
             int height = camera.pixelHeight;
@@ -238,7 +237,21 @@ namespace Malloc.ChannelPainter.Editor
             {
                 commands.Release();
             }
+        }
 
+        public void PaintScreen(Mesh posedMesh, Matrix4x4 objectToWorld, int submesh, Camera camera,
+            Vector2 cursorViewport, float radiusPixels, float hardness, float strength, Vector4 value,
+            Vector4 channelMask)
+        {
+            int width = camera.pixelWidth;
+            int height = camera.pixelHeight;
+            if (width <= 0 || height <= 0 || screenDepth == null)
+                return;
+
+            Matrix4x4 view = camera.worldToCameraMatrix;
+            var properties = new MaterialPropertyBlock();
+            properties.SetMatrix("_BrushMatrix", objectToWorld);
+            properties.SetMatrix("_ScreenView", view);
             properties.SetFloat("_BrushSpace", 2);
             properties.SetMatrix("_ScreenViewProj", camera.projectionMatrix * view);
             properties.SetVector("_CursorViewport", new Vector4(cursorViewport.x, cursorViewport.y, 0, 0));
