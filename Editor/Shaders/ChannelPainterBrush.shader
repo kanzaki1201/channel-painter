@@ -61,7 +61,7 @@ Shader "Hidden/ChannelPainter/Brush"
             float _BrushRadius;
             float _BrushHardness;
             float _BrushStrength;
-            float _BrushValue;
+            float4 _BrushValue;
             float4 _ChannelMask;
             float _BrushSpace;
             float2 _BrushCenterUV;
@@ -105,7 +105,7 @@ Shader "Hidden/ChannelPainter/Brush"
                     return saturate(source - _BrushValue * delta);
                 if (_BrushMode > 0.5)
                     return saturate(source + _BrushValue * delta);
-                return lerp(source, float4(_BrushValue, _BrushValue, _BrushValue, _BrushValue), delta);
+                return lerp(source, _BrushValue, delta);
             }
             ENDHLSL
         }

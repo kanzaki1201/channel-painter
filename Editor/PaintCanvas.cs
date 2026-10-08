@@ -168,7 +168,7 @@ namespace Malloc.ChannelPainter.Editor
         }
 
         public void Paint(Mesh mesh, Matrix4x4 matrix, int submesh, Vector3 center,
-            float radius, float hardness, float strength, float value, Vector4 channelMask)
+            float radius, float hardness, float strength, Vector4 value, Vector4 channelMask)
         {
             var properties = new MaterialPropertyBlock();
             properties.SetMatrix("_BrushMatrix", matrix);
@@ -178,7 +178,7 @@ namespace Malloc.ChannelPainter.Editor
         }
 
         public void PaintUV(Mesh mesh, int submesh, Vector2 centerUV, float radiusPixels,
-            float hardness, float strength, float value, Vector4 channelMask)
+            float hardness, float strength, Vector4 value, Vector4 channelMask)
         {
             var properties = new MaterialPropertyBlock();
             properties.SetFloat("_BrushSpace", 1);
@@ -194,7 +194,7 @@ namespace Malloc.ChannelPainter.Editor
         }
 
         public void PaintScreen(Mesh posedMesh, Matrix4x4 objectToWorld, int submesh, Camera camera,
-            Vector2 cursorViewport, float radiusPixels, float hardness, float strength, float value,
+            Vector2 cursorViewport, float radiusPixels, float hardness, float strength, Vector4 value,
             Vector4 channelMask)
         {
             int width = camera.pixelWidth;
@@ -247,7 +247,7 @@ namespace Malloc.ChannelPainter.Editor
             Paint(posedMesh, submesh, radiusPixels, hardness, strength, value, channelMask, properties);
         }
 
-        public void Fill(Mesh mesh, int submesh, int[] triangleIndices, float value, Vector4 channelMask)
+        public void Fill(Mesh mesh, int submesh, int[] triangleIndices, Vector4 value, Vector4 channelMask)
         {
             Mesh fillMesh = null;
             try
@@ -271,14 +271,14 @@ namespace Malloc.ChannelPainter.Editor
         }
 
         void Paint(Mesh mesh, int submesh, float radius, float hardness, float strength,
-            float value, Vector4 channelMask, MaterialPropertyBlock properties)
+            Vector4 value, Vector4 channelMask, MaterialPropertyBlock properties)
         {
             Graphics.Blit(Texture, source);
             properties.SetTexture("_Source", source);
             properties.SetFloat("_BrushRadius", radius);
             properties.SetFloat("_BrushHardness", hardness);
             properties.SetFloat("_BrushStrength", strength);
-            properties.SetFloat("_BrushValue", value);
+            properties.SetVector("_BrushValue", value);
             properties.SetFloat("_BrushMode", (float)BlendMode);
             properties.SetVector("_ChannelMask", channelMask);
 
@@ -333,6 +333,26 @@ namespace Malloc.ChannelPainter.Editor
                 (maskRead, maskWrite) = (maskWrite, maskRead);
             }
             return colorRead;
+        }
+
+        // Reads the stored canvas texel at a UV, not the dilated preview.
+        public Color Sample(Vector2 uv)
+        {
+            int x = Mathf.Clamp((int)(uv.x * Texture.width), 0, Texture.width - 1);
+            int y = Mathf.Clamp((int)(uv.y * Texture.height), 0, Texture.height - 1);
+            var texel = new Texture2D(1, 1, TextureFormat.RGBAFloat, false, true);
+            RenderTexture previous = RenderTexture.active;
+            try
+            {
+                RenderTexture.active = Texture;
+                texel.ReadPixels(new Rect(x, y, 1, 1), 0, 0, false);
+                return texel.GetPixel(0, 0);
+            }
+            finally
+            {
+                RenderTexture.active = previous;
+                UnityEngine.Object.DestroyImmediate(texel);
+            }
         }
 
         public Texture2D ReadbackDilated(Mesh mesh, int submesh)

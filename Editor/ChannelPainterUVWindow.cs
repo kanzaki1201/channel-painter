@@ -107,7 +107,7 @@ namespace Malloc.ChannelPainter.Editor
                     if (main != null && selected != main.ViewChannel)
                     {
                         main.ViewChannel = selected;
-                        main.Repaint();
+                        main.RefreshPanel();
                         SceneView.RepaintAll();
                         Repaint();
                     }
@@ -250,6 +250,13 @@ namespace Malloc.ChannelPainter.Editor
                 GUIUtility.hotControl = control;
                 Focus();
                 evt.Use();
+                return;
+            }
+            if (evt.button == 0 && main.EyedropperArmed && canvasRect.Contains(mouse))
+            {
+                main.PickAt(PointToUV(mouse, canvasRect));
+                evt.Use();
+                Repaint();
                 return;
             }
             if (evt.button != 0 || !canvasRect.Contains(mouse) || !main.IsPainting)

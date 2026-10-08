@@ -1,12 +1,17 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEditor.ShortcutManagement;
+using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.UIElements;
+using Cursor = UnityEngine.Cursor;
+using PointerType = UnityEngine.PointerType;
 
 namespace Malloc.ChannelPainter.Editor
 {
@@ -14,6 +19,7 @@ namespace Malloc.ChannelPainter.Editor
     {
         enum PaintTool { Brush, FillIsland }
         enum BrushSpace { World, Screen }
+        enum ValueMode { ChannelValue, Color }
 
         static readonly int[] Sizes = { 512, 1024, 2048, 4096 };
         static readonly string[] SizeLabels = { "512", "1024", "2048", "4096" };
@@ -21,8 +27,12 @@ namespace Malloc.ChannelPainter.Editor
         static readonly string[] MaskSourceLabels = { "Canvas", "Vertex Color" };
         static readonly string[] ChannelNames = { "R", "G", "B", "A" };
         static readonly string[] ViewLabels = { "RGBA", "R", "G", "B", "A" };
-        static readonly string[] ToolLabels = { "Brush", "Fill Island" };
         static readonly string[] BrushSpaceLabels = { "World", "Screen" };
+        static readonly string[] ValueModeLabels = { "Channel Value", "Color" };
+        static readonly string[] BlendLabels = { "Replace", "Add", "Subtract" };
+        const int SwatchCount = 8;
+        const int PickerId = 0x43504E54;
+        const string StylePath = "Packages/com.malloc.channel-painter/Editor/ChannelPainterWindow.uss";
         const float MinRadius = 0.001f;
         const float MaxRadius = 1f;
         const float MinScreenRadius = 2f;
@@ -64,7 +74,13 @@ namespace Malloc.ChannelPainter.Editor
         [SerializeField] int viewChannel;
         [SerializeField] PaintOutput output;
         [SerializeField] Vector4 reloadChannels;
-        int pickerId;
+        [SerializeField] ValueMode valueMode;
+        [SerializeField] Color brushColor = Color.white;
+        [SerializeField] List<Color> swatches = new List<Color>();
+        [SerializeField] bool useRange;
+        [SerializeField] float rangeMin = -1;
+        [SerializeField] float rangeMax = 1;
+        bool eyedropperArmed;
 
         PaintCanvas canvas;
         PaintSession session;
@@ -139,7 +155,7 @@ namespace Malloc.ChannelPainter.Editor
             else if (channel == 1) green = !green;
             else if (channel == 2) blue = !blue;
             else alpha = !alpha;
-            Repaint();
+            RefreshPanel();
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
         }
@@ -164,7 +180,7 @@ namespace Malloc.ChannelPainter.Editor
         }
 
         // Only the Brush tool hides the cursor, because Fill Island draws no circle to aim with.
-        internal bool HidesCursor => paint && hideCursor && tool == PaintTool.Brush;
+        internal bool HidesCursor => paint && hideCursor && tool == PaintTool.Brush && !eyedropperArmed;
 
         internal void ApplyPaintCursor(Rect rect)
         {
@@ -191,7 +207,7 @@ namespace Malloc.ChannelPainter.Editor
         void SetBlend(BrushBlend next)
         {
             blend = next;
-            Repaint();
+            RefreshPanel();
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
         }
@@ -217,7 +233,7 @@ namespace Malloc.ChannelPainter.Editor
                 if (viewChannel == value)
                     return;
                 viewChannel = value;
-                Repaint();
+                RefreshPanel();
                 SceneView.RepaintAll();
                 ChannelPainterUVWindow.Active?.Repaint();
             }
@@ -225,6 +241,8 @@ namespace Malloc.ChannelPainter.Editor
 
         Vector4 ChannelMask => new Vector4(red ? 1 : 0, green ? 1 : 0,
             blue ? 1 : 0, alpha ? 1 : 0);
+        Vector4 BrushValue => valueMode == ValueMode.Color ? (Vector4)brushColor : new Vector4(value, value, value, value);
+        internal bool EyedropperArmed => eyedropperArmed;
         bool IsDirty => session != null ? session.Dirty : dirtyFlag;
         // Only Map output swaps the canvas into a texture property.
         bool HasOutputProperty => output == PaintOutput.VertexColor || !string.IsNullOrEmpty(propertyName);
@@ -303,43 +321,755 @@ namespace Malloc.ChannelPainter.Editor
             base.DiscardChanges();
         }
 
-        void OnGUI()
+        ObjectField targetField;
+        HelpBox noTargetBox;
+        HelpBox noSlotBox;
+        HelpBox noMaterialBox;
+        HelpBox noPropertiesBox;
+        HelpBox keywordBox;
+        HelpBox noTextureBox;
+        HelpBox noUVBox;
+        HelpBox rangeWarning;
+        HelpBox detachedBox;
+        HelpBox vertexSessionBox;
+        DropdownField slotField;
+        DropdownField outputField;
+        DropdownField propertyField;
+        DropdownField sizeField;
+        DropdownField copyFromField;
+        DropdownField copyToField;
+        DropdownField viewChannelField;
+        DropdownField maskSourceField;
+        Button enableKeywordButton;
+        Button newCanvasButton;
+        Button loadPropertyButton;
+        Button resetMeshButton;
+        Button copyButton;
+        Button startButton;
+        Button fillCanvasButton;
+        Button undoButton;
+        Button eyedropperButton;
+        Button restartButton;
+        Button bakeButton;
+        Button[] toolButtons;
+        Button[] valueModeButtons;
+        Button[] blendButtons;
+        Button[] brushSpaceButtons;
+        Button[] channelButtons;
+        Button[] swatchButtons;
+        ColorField fillField;
+        ColorField colorField;
+        Slider valueSlider;
+        Slider radiusSlider;
+        Slider screenRadiusSlider;
+        Slider hardnessSlider;
+        Slider strengthSlider;
+        Toggle pressureStrengthToggle;
+        Toggle pressureSizeToggle;
+        Toggle showMaskToggle;
+        Toggle hideCursorToggle;
+        Toggle rangeToggle;
+        FloatField rangeMinField;
+        FloatField rangeMaxField;
+        Foldout canvasSection;
+        Foldout paintSection;
+        Foldout viewSection;
+        Foldout saveSection;
+        VisualElement brushSpaceRow;
+        VisualElement swatchRow;
+        VisualElement saveMapRow;
+        IMGUIContainer pickerCatcher;
+        static Texture[] toolIcons;
+        static Texture eyedropperIcon;
+
+        void CreateGUI()
         {
-            EditorGUILayout.LabelField("Target", EditorStyles.boldLabel);
-            Renderer chosen = (Renderer)EditorGUILayout.ObjectField("Target", target, typeof(Renderer), true);
-            if (chosen != target)
-                ChangeSelection(() => SetTarget(chosen));
-            if (target == null)
+            VisualElement root = rootVisualElement;
+            var sheet = AssetDatabase.LoadAssetAtPath<StyleSheet>(StylePath);
+            if (sheet != null)
+                root.styleSheets.Add(sheet);
+            root.AddToClassList("cp-root");
+            if (toolIcons == null)
             {
-                EditorGUILayout.HelpBox("Choose a MeshRenderer with a MeshFilter or a SkinnedMeshRenderer.", MessageType.Info);
-                return;
+                toolIcons = new[]
+                {
+                    EditorGUIUtility.IconContent("Grid.PaintTool").image,
+                    EditorGUIUtility.IconContent("Grid.FillTool").image
+                };
+                eyedropperIcon = EditorGUIUtility.IconContent("eyeDropper.Large").image;
             }
 
-            DrawTargetSettings();
-            Mesh mesh = TargetMesh;
-            if (mesh == null || mesh.uv.Length != mesh.vertexCount ||
-                CurrentMaterial() == null || !HasOutputProperty)
-                return;
+            // The object picker sends ObjectSelectorClosed to the focused IMGUIContainer, so it stays outside every Foldout.
+            pickerCatcher = new IMGUIContainer(OnPickerGUI) { focusable = true };
+            root.Add(pickerCatcher);
+            var scroll = new ScrollView(ScrollViewMode.Vertical);
+            root.Add(scroll);
 
-            DrawCanvasSettings();
-            DrawPaintSettings();
-            DrawViewSettings();
-            DrawSaveSettings();
-            if (session != null && session.Detached)
+            Foldout targetSection = Section(scroll, "Target");
+            targetField = new ObjectField("Target") { objectType = typeof(Renderer), allowSceneObjects = true };
+            targetField.RegisterValueChangedCallback(evt =>
             {
-                EditorGUILayout.HelpBox("Another tool replaced the mesh on this renderer, so the live preview no longer shows. Restart the session on the new mesh.", MessageType.Warning);
-                if (GUILayout.Button("Restart Session On Current Mesh"))
-                    ChangeSelection(NewCanvas);
+                var chosen = evt.newValue as Renderer;
+                if (chosen != target)
+                    ChangeSelection(() => SetTarget(chosen));
+            });
+            targetSection.Add(targetField);
+            noTargetBox = Box(targetSection, "Choose a MeshRenderer with a MeshFilter or a SkinnedMeshRenderer.", HelpBoxMessageType.Info);
+            noSlotBox = Box(targetSection, "The target needs a mesh and a material slot.", HelpBoxMessageType.Error);
+            slotField = Dropdown(targetSection, "Material Slot", null, index =>
+            {
+                if (index != slot)
+                    ChangeSelection(() =>
+                    {
+                        ResetSession();
+                        slot = index;
+                        propertyName = null;
+                    });
+            });
+            noMaterialBox = Box(targetSection, "Choose a material for this slot.", HelpBoxMessageType.Error);
+            outputField = Dropdown(targetSection, "Output", OutputLabels, index =>
+            {
+                var chosen = (PaintOutput)index;
+                if (chosen != output)
+                    ChangeSelection(() => SwitchOutput(chosen));
+            });
+            noPropertiesBox = Box(targetSection, "This shader has no texture properties.", HelpBoxMessageType.Error);
+            propertyField = Dropdown(targetSection, "Texture Property", null, index =>
+            {
+                string chosen = propertyField.value;
+                if (chosen != propertyName)
+                    ChangeSelection(() =>
+                    {
+                        ResetSession();
+                        propertyName = chosen;
+                    });
+            });
+            keywordBox = Box(targetSection, "", HelpBoxMessageType.Warning);
+            enableKeywordButton = AddButton(targetSection, "", null, () =>
+            {
+                Material material = CurrentMaterial();
+                string keyword = material == null || string.IsNullOrEmpty(propertyName) ? null : KeywordFor(material.shader, propertyName);
+                if (keyword != null)
+                    EnableKeyword(material, keyword);
+                RefreshPanel();
+            });
+            noTextureBox = Box(targetSection, "This property has no texture. Assign one in the material inspector if the shader needs a keyword to use it.", HelpBoxMessageType.Warning);
+            noUVBox = Box(targetSection, "The target mesh has no UV0.", HelpBoxMessageType.Error);
+
+            canvasSection = Section(scroll, "Canvas");
+            sizeField = Dropdown(canvasSection, "Size", SizeLabels, index => sizeIndex = index);
+            fillField = new ColorField("Fill Color") { showAlpha = true, hdr = false };
+            fillField.RegisterValueChangedCallback(evt => fill = evt.newValue);
+            canvasSection.Add(fillField);
+            newCanvasButton = AddButton(canvasSection, "New Canvas", null, () => ChangeSelection(NewCanvas));
+            loadPropertyButton = AddButton(canvasSection, "", null, () =>
+            {
+                Texture assigned = PropertyTexture;
+                if (assigned != null)
+                    Load(assigned);
+                RefreshPanel();
+            });
+            resetMeshButton = AddButton(canvasSection, "Reset To Mesh Colors",
+                "Replace the canvas with the vertex colors of the original mesh.", () => ChangeSelection(NewCanvas));
+            VisualElement copyRow = Row(canvasSection, "Copy Channel", "Copy one channel of the canvas into another.");
+            copyFromField = Dropdown(copyRow, null, ChannelNames, index =>
+            {
+                copyFrom = index;
+                RefreshPanel();
+            });
+            var arrow = new Label("→");
+            arrow.AddToClassList("cp-arrow");
+            copyRow.Add(arrow);
+            copyToField = Dropdown(copyRow, null, ChannelNames, index =>
+            {
+                copyTo = index;
+                RefreshPanel();
+            });
+            copyButton = AddButton(copyRow, "Copy", null, () =>
+            {
+                if (canvas == null || copyFrom == copyTo)
+                    return;
+                canvas.PushUndo();
+                canvas.CopyChannel(copyFrom, copyTo);
+                MarkDirty();
+                UpdateVertexColors(true);
+                SceneView.RepaintAll();
+                ChannelPainterUVWindow.Active?.Repaint();
+                RefreshPanel();
+            });
+            AddButton(canvasSection, "Load Texture...", "Pick any texture and copy it into the canvas.", () =>
+            {
+                pickerCatcher.Focus();
+                EditorGUIUtility.ShowObjectPicker<Texture>(null, false, "", PickerId);
+            });
+
+            paintSection = Section(scroll, "Paint");
+            startButton = AddButton(paintSection, "Start Painting", null, ToggleStartPainting);
+            startButton.AddToClassList("cp-primary");
+            var toolRow = new VisualElement();
+            toolRow.AddToClassList("cp-tool-row");
+            paintSection.Add(toolRow);
+            toolButtons = new[]
+            {
+                ToolButton(toolRow, toolIcons[0], "Brush", "Paint strokes.", () => SetTool(PaintTool.Brush)),
+                ToolButton(toolRow, toolIcons[1], "Fill Island", "Fill the UV island you click.", () => SetTool(PaintTool.FillIsland))
+            };
+            var toolSpacer = new VisualElement();
+            toolSpacer.AddToClassList("cp-spacer");
+            toolRow.Add(toolSpacer);
+            fillCanvasButton = AddButton(toolRow, "Fill Canvas", "Apply Value or Color to every texel of the target submesh.", () => FillTriangles(null));
+            undoButton = AddButton(toolRow, "Undo", "Undo the last stroke or fill.", UndoCanvas);
+            Segmented(paintSection, "Value Mode", ValueModeLabels,
+                "Channel Value paints one value into the enabled channels. Color paints an RGBA color, masked by the enabled channels.",
+                index =>
+                {
+                    valueMode = (ValueMode)index;
+                    SceneView.RepaintAll();
+                    RefreshPanel();
+                }, out valueModeButtons);
+            Segmented(paintSection, "Blend", BlendLabels,
+                "Replace sets the value. Add and Subtract change the current value by Value.",
+                index => SetBlend((BrushBlend)index), out blendButtons);
+            var valueRow = new VisualElement();
+            valueRow.AddToClassList("cp-value-row");
+            paintSection.Add(valueRow);
+            valueSlider = AddSlider(valueRow, "Value", 0, 1, display =>
+            {
+                Vector2 range = ValueDisplayRange();
+                value = RemapFromDisplay(display, range.x, range.y);
+                SceneView.RepaintAll();
+            });
+            colorField = new ColorField("Color") { showAlpha = true, hdr = false };
+            colorField.RegisterValueChangedCallback(evt =>
+            {
+                brushColor = evt.newValue;
+                SceneView.RepaintAll();
+            });
+            valueRow.Add(colorField);
+            eyedropperButton = new Button(ToggleEyedropper)
+            {
+                tooltip = "Pick from the canvas: click the mesh in the Scene view or the canvas in the UV window."
+            };
+            eyedropperButton.AddToClassList("cp-eyedropper");
+            if (eyedropperIcon != null)
+                eyedropperButton.Add(new Image { image = eyedropperIcon });
+            else
+                eyedropperButton.text = "Pick";
+            valueRow.Add(eyedropperButton);
+            swatchRow = Row(paintSection, "Recent Colors", "Click a swatch to paint with it.");
+            swatchButtons = new Button[SwatchCount];
+            for (int i = 0; i < SwatchCount; i++)
+            {
+                int index = i;
+                swatchButtons[i] = new Button(() => PickSwatch(index));
+                swatchButtons[i].AddToClassList("cp-swatch");
+                swatchRow.Add(swatchButtons[i]);
             }
-            if (session != null && session.IsVertexColor)
-                EditorGUILayout.HelpBox("End the Vertex color session before Apply Overrides or dragging this object into the Project window.", MessageType.Warning);
+            brushSpaceRow = Segmented(paintSection, "Brush Space", BrushSpaceLabels,
+                "World: a sphere around the point under the cursor. Screen: a circle on screen that paints only the front-most surface of the target.",
+                index =>
+                {
+                    brushSpace = (BrushSpace)index;
+                    hasHit = false;
+                    hasHoverUV = false;
+                    SceneView.RepaintAll();
+                    ChannelPainterUVWindow.Active?.Repaint();
+                    RefreshPanel();
+                }, out brushSpaceButtons);
+            radiusSlider = AddSlider(paintSection, "Radius (world units)", MinRadius, MaxRadius, next =>
+            {
+                radius = next;
+                SceneView.RepaintAll();
+            });
+            radiusSlider.tooltip = "[ and ] in the scene view.";
+            screenRadiusSlider = AddSlider(paintSection, "Screen Radius (px)", MinScreenRadius, MaxScreenRadius, next =>
+            {
+                screenRadius = next;
+                SceneView.RepaintAll();
+            });
+            hardnessSlider = AddSlider(paintSection, "Hardness", 0, 1, next => hardness = next);
+            strengthSlider = AddSlider(paintSection, "Strength", 0, 1, next => strength = next);
+            pressureStrengthToggle = AddToggle(paintSection, "Pen Pressure → Strength", null, next => pressureStrength = next);
+            pressureSizeToggle = AddToggle(paintSection, "Pen Pressure → Size", null, next => pressureSize = next);
+            VisualElement channelRow = Row(paintSection, "Paint On Channels", null);
+            channelButtons = new Button[ChannelNames.Length];
+            for (int i = 0; i < ChannelNames.Length; i++)
+            {
+                int channel = i;
+                channelButtons[i] = new Button(() => ToggleChannel(channel)) { text = ChannelNames[i] };
+                channelButtons[i].AddToClassList("cp-channel");
+                channelButtons[i].AddToClassList("cp-channel-" + ChannelNames[i].ToLowerInvariant());
+                channelRow.Add(channelButtons[i]);
+            }
+
+            viewSection = Section(scroll, "View");
+            viewChannelField = Dropdown(viewSection, "Show Channel", ViewLabels, index => ViewChannel = index);
+            showMaskToggle = AddToggle(viewSection, "Show Mask In Scene View", null, next =>
+            {
+                showMask = next;
+                SceneView.RepaintAll();
+            });
+            maskSourceField = Dropdown(viewSection, "Mask Source", MaskSourceLabels, index =>
+            {
+                maskVertexColor = index == 1;
+                SceneView.RepaintAll();
+            });
+            maskSourceField.tooltip = "Canvas shows the paint. Vertex Color shows the mesh's current vertex colors, with or without a canvas.";
+            hideCursorToggle = AddToggle(viewSection, "Hide Mouse Cursor While Painting",
+                "Show only the brush circle while the Brush tool paints.", next =>
+                {
+                    hideCursor = next;
+                    ResetCursor();
+                    SceneView.RepaintAll();
+                });
+            rangeToggle = AddToggle(viewSection, "Value Range",
+                "Show Value in shader units. Replace shows lerp(Min, Max, Value). Add and Subtract show Value × (Max − Min). The stored value stays 0 to 1.",
+                next =>
+                {
+                    useRange = next;
+                    RefreshPanel();
+                });
+            rangeMinField = AddFloat(viewSection, "Min", next =>
+            {
+                rangeMin = next;
+                RefreshPanel();
+            });
+            rangeMaxField = AddFloat(viewSection, "Max", next =>
+            {
+                rangeMax = next;
+                RefreshPanel();
+            });
+            rangeWarning = Box(viewSection, "Max must be greater than Min, so Value shows 0 to 1.", HelpBoxMessageType.Warning);
+            AddButton(viewSection, "Open UV Window", null, ChannelPainterUVWindow.Open);
+
+            saveSection = Section(scroll, "Save");
+            saveMapRow = new VisualElement();
+            saveMapRow.AddToClassList("cp-button-row");
+            saveSection.Add(saveMapRow);
+            AddButton(saveMapRow, "Save Map", "Overwrite the PNG assigned to the material, or ask for a path when none is assigned.", () =>
+            {
+                SaveMap();
+                RefreshPanel();
+            });
+            AddButton(saveMapRow, "Save Map As...", "Save to a new PNG and assign it.", () =>
+            {
+                SaveMap(true);
+                RefreshPanel();
+            });
+            bakeButton = AddButton(saveSection, "Bake To Vertex Color", null, () =>
+            {
+                BakeVertexColor();
+                RefreshPanel();
+            });
+
+            detachedBox = Box(scroll, "Another tool replaced the mesh on this renderer, so the live preview no longer shows. Restart the session on the new mesh.", HelpBoxMessageType.Warning);
+            restartButton = AddButton(scroll, "Restart Session On Current Mesh", null, () => ChangeSelection(NewCanvas));
+            vertexSessionBox = Box(scroll, "End the Vertex color session before Apply Overrides or dragging this object into the Project window.", HelpBoxMessageType.Warning);
+
+            RefreshPanel();
+            // Inspector edits, keyword changes and play mode changes have no callback here.
+            root.schedule.Execute(RefreshPanel).Every(250);
         }
 
+        // Pushes every field into the panel. Shortcuts and scene events change fields outside the panel.
+        internal void RefreshPanel()
+        {
+            if (targetField == null)
+                return;
+            bool playing = EditorApplication.isPlayingOrWillChangePlaymode;
+            bool map = output == PaintOutput.Map;
+            Sync(targetField, (UnityEngine.Object)target);
+            Mesh mesh = TargetMesh;
+            Material[] materials = target == null ? null : target.sharedMaterials;
+            int count = mesh == null ? 0 : Mathf.Min(mesh.subMeshCount, materials.Length);
+            Material material = count == 0 ? null : CurrentMaterial();
+            bool hasUV = mesh != null && mesh.HasVertexAttribute(VertexAttribute.TexCoord0);
+            string[] properties = material != null && map ? TextureProperties(material.shader) : Array.Empty<string>();
+            // Auto-select the first texture property; with unsaved paint the user picks one instead.
+            if (properties.Length > 0 && Array.IndexOf(properties, propertyName) < 0 && !IsDirty)
+            {
+                ResetSession();
+                propertyName = properties[0];
+            }
+            bool hasProperty = Array.IndexOf(properties, propertyName) >= 0;
+
+            Show(noTargetBox, target == null);
+            Show(noSlotBox, target != null && count == 0);
+            Show(slotField, count > 0);
+            if (count > 0)
+            {
+                var labels = new List<string>(count);
+                for (int i = 0; i < count; i++)
+                    labels.Add(i + ": " + (materials[i] == null ? "None" : materials[i].name));
+                SetChoices(slotField, labels);
+                SyncIndex(slotField, Mathf.Clamp(slot, 0, count - 1));
+            }
+            Show(noMaterialBox, count > 0 && material == null);
+            Show(outputField, material != null);
+            SyncIndex(outputField, (int)output);
+            Show(noPropertiesBox, material != null && map && properties.Length == 0);
+            Show(propertyField, properties.Length > 0);
+            if (properties.Length > 0)
+            {
+                SetChoices(propertyField, properties.ToList());
+                Sync(propertyField, propertyName);
+            }
+            string keyword = hasProperty ? KeywordFor(material.shader, propertyName) : null;
+            bool keywordOff = keyword != null && !material.IsKeywordEnabled(keyword);
+            Show(keywordBox, keywordOff);
+            Show(enableKeywordButton, keywordOff);
+            if (keywordOff)
+            {
+                keywordBox.text = keyword + " is off, so the shader ignores " + propertyName + ".";
+                enableKeywordButton.text = "Enable " + keyword;
+            }
+            Show(noTextureBox, hasProperty && keyword == null && material.GetTexture(propertyName) == null);
+            Show(noUVBox, material != null && mesh != null && !hasUV);
+
+            bool ready = target != null && hasUV && material != null && HasOutputProperty;
+            Show(canvasSection, ready);
+            Show(paintSection, ready);
+            Show(viewSection, ready);
+            Show(saveSection, ready);
+            bool detached = ready && session != null && session.Detached;
+            Show(detachedBox, detached);
+            Show(restartButton, detached);
+            Show(vertexSessionBox, ready && session != null && session.IsVertexColor);
+            if (!ready)
+                return;
+
+            SyncIndex(sizeField, sizeIndex);
+            Show(fillField, map);
+            Sync(fillField, fill);
+            Show(newCanvasButton, map);
+            Texture assigned = map ? PropertyTexture : null;
+            newCanvasButton.tooltip = assigned == null
+                ? "Start a canvas filled with Fill Color. The material has no " + propertyName + ", so this also saves the canvas as a new PNG and assigns it."
+                : "Start a canvas filled with Fill Color.";
+            Show(loadPropertyButton, map);
+            loadPropertyButton.text = "Load " + propertyName + " From Material";
+            loadPropertyButton.tooltip = "Replace the canvas with the map that the material holds in " + propertyName + ".";
+            loadPropertyButton.SetEnabled(assigned != null);
+            Show(resetMeshButton, !map);
+            SyncIndex(copyFromField, copyFrom);
+            SyncIndex(copyToField, copyTo);
+            copyButton.SetEnabled(canvas != null && copyFrom != copyTo);
+
+            startButton.text = paint ? "Stop Painting" : "Start Painting";
+            startButton.EnableInClassList("cp-painting", paint);
+            startButton.SetEnabled(!playing);
+            SetActive(toolButtons, (int)tool);
+            fillCanvasButton.SetEnabled(canvas != null && session != null && !playing);
+            undoButton.SetEnabled(canvas != null && canvas.CanUndo);
+            SetActive(valueModeButtons, (int)valueMode);
+            SetActive(blendButtons, (int)blend);
+            bool colorMode = valueMode == ValueMode.Color;
+            Show(valueSlider, !colorMode);
+            Vector2 range = ValueDisplayRange();
+            SetSliderRange(valueSlider, range.x, range.y, RemapToDisplay(value, range.x, range.y));
+            Show(colorField, colorMode);
+            Sync(colorField, brushColor);
+            eyedropperButton.EnableInClassList("cp-active", eyedropperArmed);
+            eyedropperButton.SetEnabled(canvas != null);
+            Show(swatchRow, colorMode);
+            for (int i = 0; i < SwatchCount; i++)
+            {
+                bool has = i < swatches.Count;
+                swatchButtons[i].SetEnabled(has);
+                swatchButtons[i].EnableInClassList("cp-empty", !has);
+                swatchButtons[i].style.backgroundColor = has ? new StyleColor(swatches[i]) : new StyleColor(StyleKeyword.Null);
+            }
+            bool brush = tool == PaintTool.Brush;
+            Show(brushSpaceRow, brush);
+            SetActive(brushSpaceButtons, (int)brushSpace);
+            Show(radiusSlider, brush && brushSpace == BrushSpace.World);
+            Sync(radiusSlider, radius);
+            Show(screenRadiusSlider, brush && brushSpace == BrushSpace.Screen);
+            Sync(screenRadiusSlider, screenRadius);
+            Show(hardnessSlider, brush);
+            Sync(hardnessSlider, hardness);
+            Show(strengthSlider, brush);
+            Sync(strengthSlider, strength);
+            Show(pressureStrengthToggle, brush);
+            Sync(pressureStrengthToggle, pressureStrength);
+            Show(pressureSizeToggle, brush);
+            Sync(pressureSizeToggle, pressureSize);
+            Vector4 mask = ChannelMask;
+            for (int i = 0; i < channelButtons.Length; i++)
+                channelButtons[i].EnableInClassList("cp-on", mask[i] > 0);
+
+            SyncIndex(viewChannelField, viewChannel);
+            Sync(showMaskToggle, showMask);
+            Show(maskSourceField, map);
+            SyncIndex(maskSourceField, maskVertexColor ? 1 : 0);
+            Sync(hideCursorToggle, hideCursor);
+            Sync(rangeToggle, useRange);
+            Show(rangeMinField, useRange);
+            Sync(rangeMinField, rangeMin);
+            Show(rangeMaxField, useRange);
+            Sync(rangeMaxField, rangeMax);
+            Show(rangeWarning, useRange && rangeMax <= rangeMin);
+
+            Show(saveMapRow, map);
+            saveMapRow.SetEnabled(canvas != null);
+            Show(bakeButton, !map);
+            bakeButton.SetEnabled(canvas != null);
+        }
+
+        void OnPickerGUI()
+        {
+            Event evt = Event.current;
+            if (evt.type != EventType.ExecuteCommand || evt.commandName != "ObjectSelectorClosed" ||
+                EditorGUIUtility.GetObjectPickerControlID() != PickerId)
+                return;
+            if (EditorGUIUtility.GetObjectPickerObject() is Texture picked)
+                Load(picked);
+            evt.Use();
+            RefreshPanel();
+        }
+
+        // On Cancel nothing changes, and RefreshPanel puts the old value back into the control.
         void ChangeSelection(Action change)
         {
             if (ConfirmSessionEnd())
                 change();
-            GUIUtility.ExitGUI();
+            RefreshPanel();
+        }
+
+        void ToggleStartPainting()
+        {
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
+                return;
+            if (!paint && canvas == null)
+                CreateStartCanvas();
+            paint = !paint && canvas != null;
+            hasHit = false;
+            if (!paint)
+            {
+                EndStroke();
+                ResetCursor();
+            }
+            SceneView.RepaintAll();
+            ChannelPainterUVWindow.Active?.Repaint();
+            RefreshPanel();
+        }
+
+        void SetTool(PaintTool next)
+        {
+            tool = next;
+            hasHit = false;
+            SceneView.RepaintAll();
+            ChannelPainterUVWindow.Active?.Repaint();
+            RefreshPanel();
+        }
+
+        void UndoCanvas()
+        {
+            if (canvas == null || !canvas.CanUndo)
+                return;
+            canvas.Undo();
+            MarkDirty();
+            UpdateVertexColors(true);
+            SceneView.RepaintAll();
+            ChannelPainterUVWindow.Active?.Repaint();
+            RefreshPanel();
+        }
+
+        void ToggleEyedropper()
+        {
+            eyedropperArmed = !eyedropperArmed && canvas != null;
+            ResetCursor();
+            SceneView.RepaintAll();
+            ChannelPainterUVWindow.Active?.Repaint();
+            RefreshPanel();
+        }
+
+        // Samples the stored canvas, so it returns the value the shader reads, not the lit screen.
+        internal void PickAt(Vector2 uv)
+        {
+            if (canvas == null)
+                return;
+            Color picked = canvas.Sample(uv);
+            if (valueMode == ValueMode.Color)
+                brushColor = picked;
+            else
+                value = Mathf.Clamp01(picked[Mathf.Max(Array.IndexOf(new[] { red, green, blue, alpha }, true), 0)]);
+            eyedropperArmed = false;
+            SceneView.RepaintAll();
+            ChannelPainterUVWindow.Active?.Repaint();
+            RefreshPanel();
+        }
+
+        void PickSwatch(int index)
+        {
+            if (index >= swatches.Count)
+                return;
+            brushColor = swatches[index];
+            RefreshPanel();
+        }
+
+        void PushSwatch()
+        {
+            if (valueMode != ValueMode.Color)
+                return;
+            swatches.Remove(brushColor);
+            swatches.Insert(0, brushColor);
+            if (swatches.Count > SwatchCount)
+                swatches.RemoveRange(SwatchCount, swatches.Count - SwatchCount);
+        }
+
+        // Replace shows Value inside [min, max]. Add and Subtract show it as an amount of that span.
+        Vector2 ValueDisplayRange()
+        {
+            if (!useRange || rangeMax <= rangeMin)
+                return new Vector2(0, 1);
+            return blend == BrushBlend.Replace ? new Vector2(rangeMin, rangeMax) : new Vector2(0, rangeMax - rangeMin);
+        }
+
+        public static float RemapToDisplay(float value, float min, float max)
+        {
+            return Mathf.LerpUnclamped(min, max, value);
+        }
+
+        public static float RemapFromDisplay(float display, float min, float max)
+        {
+            return Mathf.Clamp01((display - min) / (max - min));
+        }
+
+        // Widening first keeps the current value inside the range, so no clamp sends a change event.
+        static void SetSliderRange(Slider slider, float low, float high, float display)
+        {
+            slider.lowValue = Mathf.Min(slider.lowValue, low);
+            slider.highValue = Mathf.Max(slider.highValue, high);
+            if (!Mathf.Approximately(slider.value, display))
+                slider.SetValueWithoutNotify(display);
+            slider.lowValue = low;
+            slider.highValue = high;
+        }
+
+        // Skips equal values, so a 250 ms refresh does not rewrite a field the user is typing in.
+        static void Sync<T>(BaseField<T> field, T next)
+        {
+            if (!EqualityComparer<T>.Default.Equals(field.value, next))
+                field.SetValueWithoutNotify(next);
+        }
+
+        static void SyncIndex(DropdownField field, int index)
+        {
+            Sync(field, index >= 0 && index < field.choices.Count ? field.choices[index] : null);
+        }
+
+        // Reassigning equal choices would close an open dropdown on every refresh.
+        static void SetChoices(DropdownField field, List<string> choices)
+        {
+            if (field.choices == null || !field.choices.SequenceEqual(choices))
+                field.choices = choices;
+        }
+
+        static void Show(VisualElement element, bool visible)
+        {
+            element.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
+        }
+
+        static void SetActive(Button[] buttons, int active)
+        {
+            for (int i = 0; i < buttons.Length; i++)
+                buttons[i].EnableInClassList("cp-active", i == active);
+        }
+
+        static Foldout Section(VisualElement parent, string title)
+        {
+            var section = new Foldout { text = title, viewDataKey = "channel-painter-" + title };
+            section.AddToClassList("cp-section");
+            parent.Add(section);
+            return section;
+        }
+
+        static HelpBox Box(VisualElement parent, string text, HelpBoxMessageType type)
+        {
+            var box = new HelpBox(text, type);
+            parent.Add(box);
+            return box;
+        }
+
+        static Button AddButton(VisualElement parent, string text, string tooltip, Action click)
+        {
+            var button = new Button(click) { text = text, tooltip = tooltip };
+            parent.Add(button);
+            return button;
+        }
+
+        static Button ToolButton(VisualElement parent, Texture icon, string text, string tooltip, Action click)
+        {
+            var button = new Button(click) { tooltip = tooltip };
+            button.AddToClassList("cp-tool");
+            if (icon != null)
+                button.Add(new Image { image = icon });
+            button.Add(new Label(text));
+            parent.Add(button);
+            return button;
+        }
+
+        static VisualElement Row(VisualElement parent, string label, string tooltip)
+        {
+            var row = new VisualElement { tooltip = tooltip };
+            row.AddToClassList("cp-row");
+            var caption = new Label(label);
+            caption.AddToClassList("cp-row-label");
+            row.Add(caption);
+            parent.Add(row);
+            return row;
+        }
+
+        // Plain buttons with an active class: a ToolbarToggle flips itself, which breaks cancel-revert.
+        static VisualElement Segmented(VisualElement parent, string label, string[] labels, string tooltip,
+            Action<int> click, out Button[] buttons)
+        {
+            VisualElement row = Row(parent, label, tooltip);
+            var segment = new VisualElement();
+            segment.AddToClassList("cp-segment");
+            row.Add(segment);
+            buttons = new Button[labels.Length];
+            for (int i = 0; i < labels.Length; i++)
+            {
+                int index = i;
+                buttons[i] = new Button(() => click(index)) { text = labels[i] };
+                buttons[i].AddToClassList("cp-segment-button");
+                segment.Add(buttons[i]);
+            }
+            return row;
+        }
+
+        static DropdownField Dropdown(VisualElement parent, string label, string[] choices, Action<int> changed)
+        {
+            var field = new DropdownField(label) { choices = choices == null ? new List<string>() : choices.ToList() };
+            field.RegisterValueChangedCallback(evt => changed(field.index));
+            parent.Add(field);
+            return field;
+        }
+
+        static Slider AddSlider(VisualElement parent, string label, float low, float high, Action<float> changed)
+        {
+            var slider = new Slider(label, low, high) { showInputField = true };
+            slider.RegisterValueChangedCallback(evt => changed(evt.newValue));
+            parent.Add(slider);
+            return slider;
+        }
+
+        static Toggle AddToggle(VisualElement parent, string label, string tooltip, Action<bool> changed)
+        {
+            var toggle = new Toggle(label) { tooltip = tooltip };
+            toggle.RegisterValueChangedCallback(evt => changed(evt.newValue));
+            parent.Add(toggle);
+            return toggle;
+        }
+
+        static FloatField AddFloat(VisualElement parent, string label, Action<float> changed)
+        {
+            var field = new FloatField(label);
+            field.RegisterValueChangedCallback(evt => changed(evt.newValue));
+            parent.Add(field);
+            return field;
         }
 
         bool ConfirmSessionEnd()
@@ -359,20 +1089,26 @@ namespace Malloc.ChannelPainter.Editor
 
         void SetTarget(Renderer chosen)
         {
-            EndSession();
-            ReleaseCanvas();
+            ResetSession();
             ReleasePose();
             target = chosen is SkinnedMeshRenderer ||
                 (chosen is MeshRenderer && chosen.GetComponent<MeshFilter>() != null)
                 ? chosen : null;
             slot = 0;
             propertyName = null;
+            RefreshPanel();
+        }
+
+        // Ends the session for a target, slot or property change.
+        void ResetSession()
+        {
+            EndSession();
+            ReleaseCanvas();
             paint = false;
             hasHit = false;
             hasHoverUV = false;
             ClearIslands();
             ClearDirty();
-            Repaint();
         }
 
         Mesh SharedMesh()
@@ -393,86 +1129,6 @@ namespace Malloc.ChannelPainter.Editor
                 return null;
             Material[] materials = target.sharedMaterials;
             return slot >= 0 && slot < materials.Length ? materials[slot] : null;
-        }
-
-        void DrawTargetSettings()
-        {
-            Mesh mesh = TargetMesh;
-            int count = mesh == null ? 0 : Mathf.Min(mesh.subMeshCount, target.sharedMaterials.Length);
-            if (count == 0)
-            {
-                EditorGUILayout.HelpBox("The target needs a mesh and a material slot.", MessageType.Error);
-                return;
-            }
-
-            var labels = new string[count];
-            for (int i = 0; i < count; i++)
-                labels[i] = i + ": " + (target.sharedMaterials[i] == null ? "None" : target.sharedMaterials[i].name);
-            int chosen = EditorGUILayout.Popup("Material Slot", Mathf.Clamp(slot, 0, count - 1), labels);
-            if (chosen != slot)
-                ChangeSelection(() =>
-                {
-                    EndSession();
-                    ReleaseCanvas();
-                    slot = chosen;
-                    propertyName = null;
-                    paint = false;
-                    hasHit = false;
-                    hasHoverUV = false;
-                    ClearIslands();
-                    ClearDirty();
-                });
-
-            Material material = CurrentMaterial();
-            if (material == null)
-            {
-                EditorGUILayout.HelpBox("Choose a material for this slot.", MessageType.Error);
-                return;
-            }
-
-            PaintOutput chosenOutput = (PaintOutput)EditorGUILayout.Popup("Output", (int)output, OutputLabels);
-            if (chosenOutput != output)
-                ChangeSelection(() => SwitchOutput(chosenOutput));
-            if (output == PaintOutput.VertexColor)
-            {
-                if (mesh.uv.Length != mesh.vertexCount)
-                    EditorGUILayout.HelpBox("The target mesh has no UV0.", MessageType.Error);
-                return;
-            }
-
-            string[] properties = TextureProperties(material.shader);
-            if (properties.Length == 0)
-            {
-                EditorGUILayout.HelpBox("This shader has no texture properties.", MessageType.Error);
-                return;
-            }
-            int index = Array.IndexOf(properties, propertyName);
-            int next = EditorGUILayout.Popup("Texture Property", Mathf.Max(index, 0), properties);
-            string chosenProperty = properties[next];
-            if (chosenProperty != propertyName)
-                ChangeSelection(() =>
-                {
-                    EndSession();
-                    ReleaseCanvas();
-                    propertyName = chosenProperty;
-                    paint = false;
-                    ClearDirty();
-                });
-
-            string keyword = KeywordFor(material.shader, propertyName);
-            if (keyword != null && !material.IsKeywordEnabled(keyword))
-            {
-                EditorGUILayout.HelpBox(keyword + " is off, so the shader ignores " + propertyName + ".", MessageType.Warning);
-                if (GUILayout.Button("Enable " + keyword))
-                {
-                    EnableKeyword(material, keyword);
-                    GUIUtility.ExitGUI();
-                }
-            }
-            else if (keyword == null && material.GetTexture(propertyName) == null)
-                EditorGUILayout.HelpBox("This property has no texture. Assign one in the material inspector if the shader needs a keyword to use it.", MessageType.Warning);
-            if (mesh.uv.Length != mesh.vertexCount)
-                EditorGUILayout.HelpBox("The target mesh has no UV0.", MessageType.Error);
         }
 
         static string KeywordFor(Shader shader, string property)
@@ -498,154 +1154,6 @@ namespace Malloc.ChannelPainter.Editor
                 if (shader.GetPropertyType(i) == ShaderPropertyType.Texture)
                     properties.Add(shader.GetPropertyName(i));
             return properties.ToArray();
-        }
-
-        void DrawPaintSettings()
-        {
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Paint", EditorStyles.boldLabel);
-            using (new EditorGUI.DisabledScope(EditorApplication.isPlayingOrWillChangePlaymode))
-                if (GUILayout.Button(paint ? "Stop Painting" : "Start Painting", GUILayout.Height(28)))
-                {
-                    if (!paint && canvas == null)
-                        CreateStartCanvas();
-                    paint = !paint && canvas != null;
-                    hasHit = false;
-                    if (!paint)
-                    {
-                        EndStroke();
-                        ResetCursor();
-                    }
-                    SceneView.RepaintAll();
-                    ChannelPainterUVWindow.Active?.Repaint();
-                    GUIUtility.ExitGUI();
-                }
-            PaintTool chosenTool = (PaintTool)EditorGUILayout.Popup("Tool", (int)tool, ToolLabels);
-            if (chosenTool != tool)
-            {
-                tool = chosenTool;
-                hasHit = false;
-                SceneView.RepaintAll();
-                ChannelPainterUVWindow.Active?.Repaint();
-            }
-            EditorGUI.BeginChangeCheck();
-            blend = (BrushBlend)EditorGUILayout.EnumPopup(
-                new GUIContent("Blend", "Replace sets the value. Add and Subtract change the current value by Value."), blend);
-            value = EditorGUILayout.Slider("Value", value, 0, 1);
-            if (tool == PaintTool.Brush)
-                DrawBrushSettings();
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.PrefixLabel("Paint On Channels");
-                red = GUILayout.Toggle(red, "R", EditorStyles.miniButtonLeft, GUILayout.Width(28));
-                green = GUILayout.Toggle(green, "G", EditorStyles.miniButtonMid, GUILayout.Width(28));
-                blue = GUILayout.Toggle(blue, "B", EditorStyles.miniButtonMid, GUILayout.Width(28));
-                alpha = GUILayout.Toggle(alpha, "A", EditorStyles.miniButtonRight, GUILayout.Width(28));
-                GUILayout.FlexibleSpace();
-            }
-            if (EditorGUI.EndChangeCheck())
-                SceneView.RepaintAll();
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                using (new EditorGUI.DisabledScope(canvas == null || session == null ||
-                    EditorApplication.isPlayingOrWillChangePlaymode))
-                    if (GUILayout.Button(new GUIContent("Fill Canvas", "Apply Value to every texel of the target submesh.")))
-                    {
-                        FillTriangles(null);
-                        GUIUtility.ExitGUI();
-                    }
-                using (new EditorGUI.DisabledScope(canvas == null || !canvas.CanUndo))
-                    if (GUILayout.Button("Undo"))
-                    {
-                        canvas.Undo();
-                        MarkDirty();
-                        UpdateVertexColors(true);
-                        SceneView.RepaintAll();
-                        ChannelPainterUVWindow.Active?.Repaint();
-                    }
-            }
-        }
-
-        void DrawBrushSettings()
-        {
-            BrushSpace chosenSpace = (BrushSpace)EditorGUILayout.Popup("Brush Space", (int)brushSpace, BrushSpaceLabels);
-            if (chosenSpace != brushSpace)
-            {
-                brushSpace = chosenSpace;
-                hasHit = false;
-                hasHoverUV = false;
-                ChannelPainterUVWindow.Active?.Repaint();
-            }
-            if (brushSpace == BrushSpace.Screen)
-                screenRadius = EditorGUILayout.Slider("Screen Radius (px)", screenRadius,
-                    MinScreenRadius, MaxScreenRadius);
-            else
-                radius = EditorGUILayout.Slider(new GUIContent("Radius (world units)", "[ and ] in the scene view."),
-                    radius, MinRadius, MaxRadius);
-            hardness = EditorGUILayout.Slider("Hardness", hardness, 0, 1);
-            strength = EditorGUILayout.Slider("Strength", strength, 0, 1);
-            pressureStrength = EditorGUILayout.Toggle("Pen Pressure → Strength", pressureStrength);
-            pressureSize = EditorGUILayout.Toggle("Pen Pressure → Size", pressureSize);
-        }
-
-        void DrawCanvasSettings()
-        {
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Canvas", EditorStyles.boldLabel);
-            sizeIndex = EditorGUILayout.Popup("Size", sizeIndex, SizeLabels);
-            if (output == PaintOutput.Map)
-            {
-                fill = EditorGUILayout.ColorField("Fill Color", fill);
-                string newTooltip = PropertyTexture == null
-                    ? "Start a canvas filled with Fill Color. The material has no " + propertyName + ", so this also saves the canvas as a new PNG and assigns it."
-                    : "Start a canvas filled with Fill Color.";
-                if (GUILayout.Button(new GUIContent("New Canvas", newTooltip)))
-                    ChangeSelection(NewCanvas);
-                using (new EditorGUI.DisabledScope(PropertyTexture == null))
-                    if (GUILayout.Button(new GUIContent("Load " + propertyName + " From Material",
-                        "Replace the canvas with the map that the material holds in " + propertyName + ".")))
-                    {
-                        Load(PropertyTexture);
-                        GUIUtility.ExitGUI();
-                    }
-            }
-            else if (GUILayout.Button(new GUIContent("Reset To Mesh Colors",
-                "Replace the canvas with the vertex colors of the original mesh.")))
-                ChangeSelection(NewCanvas);
-
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.PrefixLabel(new GUIContent("Copy Channel", "Copy one channel of the canvas into another."));
-                copyFrom = EditorGUILayout.Popup(copyFrom, ChannelNames, GUILayout.Width(40));
-                GUILayout.Label("→", GUILayout.Width(16));
-                copyTo = EditorGUILayout.Popup(copyTo, ChannelNames, GUILayout.Width(40));
-                using (new EditorGUI.DisabledScope(canvas == null || copyFrom == copyTo))
-                    if (GUILayout.Button("Copy"))
-                    {
-                        canvas.PushUndo();
-                        canvas.CopyChannel(copyFrom, copyTo);
-                        MarkDirty();
-                        UpdateVertexColors(true);
-                        SceneView.RepaintAll();
-                        ChannelPainterUVWindow.Active?.Repaint();
-                        GUIUtility.ExitGUI();
-                    }
-            }
-            if (GUILayout.Button(new GUIContent("Load Texture...", "Pick any texture and copy it into the canvas.")))
-            {
-                pickerId = GUIUtility.GetControlID(FocusType.Passive);
-                EditorGUIUtility.ShowObjectPicker<Texture>(null, false, "", pickerId);
-                GUIUtility.ExitGUI();
-            }
-            Event evt = Event.current;
-            if (evt.type == EventType.ExecuteCommand && evt.commandName == "ObjectSelectorClosed" &&
-                EditorGUIUtility.GetObjectPickerControlID() == pickerId)
-            {
-                pickerId = 0;
-                if (EditorGUIUtility.GetObjectPickerObject() is Texture picked)
-                    Load(picked);
-                GUIUtility.ExitGUI();
-            }
         }
 
         void NewCanvas()
@@ -695,74 +1203,6 @@ namespace Malloc.ChannelPainter.Editor
             UpdateVertexColors(true);
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
-        }
-
-        void DrawViewSettings()
-        {
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField("View", EditorStyles.boldLabel);
-            ViewChannel = EditorGUILayout.Popup("Show Channel", viewChannel, ViewLabels);
-            bool nextShowMask = EditorGUILayout.Toggle("Show Mask In Scene View", showMask);
-            if (nextShowMask != showMask)
-            {
-                showMask = nextShowMask;
-                SceneView.RepaintAll();
-            }
-            // In Vertex color output the canvas already drives the vertex colors.
-            if (output == PaintOutput.Map)
-            {
-                int nextSource = EditorGUILayout.Popup(new GUIContent("Mask Source",
-                    "Canvas shows the paint. Vertex Color shows the mesh's current vertex colors, with or without a canvas."),
-                    maskVertexColor ? 1 : 0, MaskSourceLabels);
-                if ((nextSource == 1) != maskVertexColor)
-                {
-                    maskVertexColor = nextSource == 1;
-                    SceneView.RepaintAll();
-                }
-            }
-            bool nextHide = EditorGUILayout.Toggle(new GUIContent("Hide Mouse Cursor While Painting",
-                "Show only the brush circle while the Brush tool paints."), hideCursor);
-            if (nextHide != hideCursor)
-            {
-                hideCursor = nextHide;
-                ResetCursor();
-                SceneView.RepaintAll();
-            }
-            if (GUILayout.Button("Open UV Window"))
-            {
-                ChannelPainterUVWindow.Open();
-                GUIUtility.ExitGUI();
-            }
-        }
-
-        void DrawSaveSettings()
-        {
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Save", EditorStyles.boldLabel);
-            using (new EditorGUI.DisabledScope(canvas == null))
-            {
-                if (output == PaintOutput.Map)
-                {
-                    using (new EditorGUILayout.HorizontalScope())
-                    {
-                        if (GUILayout.Button(new GUIContent("Save Map", "Overwrite the PNG assigned to the material, or ask for a path when none is assigned.")))
-                        {
-                            SaveMap();
-                            GUIUtility.ExitGUI();
-                        }
-                        if (GUILayout.Button(new GUIContent("Save Map As...", "Save to a new PNG and assign it.")))
-                        {
-                            SaveMap(true);
-                            GUIUtility.ExitGUI();
-                        }
-                    }
-                }
-                else if (GUILayout.Button("Bake To Vertex Color"))
-                {
-                    BakeVertexColor();
-                    GUIUtility.ExitGUI();
-                }
-            }
         }
 
         void SwitchOutput(PaintOutput chosen)
@@ -1015,6 +1455,11 @@ namespace Malloc.ChannelPainter.Editor
 
         void OnSceneGUI(SceneView view)
         {
+            if (eyedropperArmed && target != null && canvas != null)
+            {
+                HandleEyedropperSceneGUI(view);
+                return;
+            }
             if (!paint || target == null || canvas == null || session == null)
                 return;
             Handles.BeginGUI();
@@ -1028,6 +1473,24 @@ namespace Malloc.ChannelPainter.Editor
                 return;
             }
             HandleBrushSceneGUI(view);
+        }
+
+        // The armed eyedropper keeps the cursor, paints nothing, and ray-hits the mesh in either brush space.
+        void HandleEyedropperSceneGUI(SceneView view)
+        {
+            Event evt = Event.current;
+            if (evt.alt)
+                return;
+            Handles.BeginGUI();
+            EditorGUIUtility.AddCursorRect(new Rect(0, 0, view.position.width, view.position.height), MouseCursor.Arrow);
+            Handles.EndGUI();
+            HandleUtility.AddDefaultControl(GUIUtility.GetControlID(FocusType.Passive));
+            if (evt.type == EventType.MouseDown && evt.button == 0 &&
+                UpdateSceneHit(evt, out _, out _, out _) && hasHoverUV)
+                PickAt(hoverUV);
+            if (evt.button == 0 && (evt.type == EventType.MouseDown ||
+                evt.type == EventType.MouseDrag || evt.type == EventType.MouseUp))
+                evt.Use();
         }
 
         void HandleFillSceneGUI(SceneView view)
@@ -1111,12 +1574,12 @@ namespace Malloc.ChannelPainter.Editor
             Vector2 screenPixel = HandleUtility.GUIPointToScreenPixelCoordinate(evt.mousePosition);
             canvas.BlendMode = blend;
             canvas.PaintScreen(mesh, matrix, slot, view.camera, PaintCanvas.CursorViewport(view.camera, screenPixel),
-                pressured.y, hardness, pressured.x, value, ChannelMask);
+                pressured.y, hardness, pressured.x, BrushValue, ChannelMask);
             MarkDirty();
             UpdateVertexColors(false);
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
-            Repaint();
+            RefreshPanel();
             evt.Use();
         }
 
@@ -1140,7 +1603,7 @@ namespace Malloc.ChannelPainter.Editor
             else
                 radius = Mathf.Clamp(radius * step, MinRadius, MaxRadius);
             evt.Use();
-            Repaint();
+            RefreshPanel();
             view.Repaint();
             return true;
         }
@@ -1289,12 +1752,13 @@ namespace Malloc.ChannelPainter.Editor
                 return;
             canvas.PushUndo();
             canvas.BlendMode = blend;
-            canvas.Fill(TargetMesh, slot, triangles, value, ChannelMask);
+            canvas.Fill(TargetMesh, slot, triangles, BrushValue, ChannelMask);
+            PushSwatch();
             MarkDirty();
             UpdateVertexColors(true);
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
-            Repaint();
+            RefreshPanel();
         }
 
         void ApplyStroke(Event evt, bool found, RaycastHit hit, Mesh mesh, Matrix4x4 matrix)
@@ -1312,7 +1776,7 @@ namespace Malloc.ChannelPainter.Editor
                 }
                 Vector2 pressured = Pressured(strength, radius, PenPressure(evt), pressureStrength, pressureSize);
                 canvas.BlendMode = blend;
-                canvas.Paint(mesh, matrix, slot, hitPoint, pressured.y, hardness, pressured.x, value, ChannelMask);
+                canvas.Paint(mesh, matrix, slot, hitPoint, pressured.y, hardness, pressured.x, BrushValue, ChannelMask);
                 MarkDirty();
                 UpdateVertexColors(false);
                 SceneView.RepaintAll();
@@ -1346,7 +1810,7 @@ namespace Malloc.ChannelPainter.Editor
             }
             Vector2 pressured = Pressured(strength, radiusPixels, pressure, pressureStrength, pressureSize);
             canvas.BlendMode = blend;
-            canvas.PaintUV(TargetMesh, slot, uv, pressured.y, hardness, pressured.x, value, ChannelMask);
+            canvas.PaintUV(TargetMesh, slot, uv, pressured.y, hardness, pressured.x, BrushValue, ChannelMask);
             MarkDirty();
             UpdateVertexColors(false);
             SceneView.RepaintAll();
@@ -1361,7 +1825,10 @@ namespace Malloc.ChannelPainter.Editor
         void EndStroke()
         {
             if (strokeSnapshotTaken)
+            {
                 UpdateVertexColors(true);
+                PushSwatch();
+            }
             strokeSnapshotTaken = false;
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();

@@ -42,7 +42,7 @@ namespace Malloc.ChannelPainter.Editor
                 using (var canvas = new PaintCanvas(64, Color.white))
                 {
                     canvas.Paint(quad, Matrix4x4.identity, 0, new Vector3(0.25f, 0.75f, 0),
-                        0.15f, 0.5f, 1, 0, new Vector4(1, 0, 0, 0));
+                        0.15f, 0.5f, 1, Vector4.zero, new Vector4(1, 0, 0, 0));
                     Texture2D readback = canvas.ReadbackDilated(quad, 0);
                     try
                     {
@@ -103,7 +103,7 @@ namespace Malloc.ChannelPainter.Editor
                 {
                     var mask = new Vector4(1, 0, 0, 0);
                     Vector2 upper = PaintCanvas.CursorViewport(camera, new Vector2(88, 96));
-                    canvas.PaintScreen(mesh, Matrix4x4.identity, 0, camera, upper, 8, 1, 1, 0, mask);
+                    canvas.PaintScreen(mesh, Matrix4x4.identity, 0, camera, upper, 8, 1, 1, Vector4.zero, mask);
                     Texture2D first = canvas.ReadbackDilated(mesh, 0);
                     try
                     {
@@ -116,7 +116,7 @@ namespace Malloc.ChannelPainter.Editor
                     }
 
                     Vector2 lower = PaintCanvas.CursorViewport(camera, new Vector2(40, 32));
-                    canvas.PaintScreen(mesh, Matrix4x4.identity, 1, camera, lower, 8, 1, 1, 0, mask);
+                    canvas.PaintScreen(mesh, Matrix4x4.identity, 1, camera, lower, 8, 1, 1, Vector4.zero, mask);
                     Texture2D second = canvas.ReadbackDilated(mesh, 1);
                     try
                     {
@@ -161,7 +161,7 @@ namespace Malloc.ChannelPainter.Editor
                 using (var canvas = new PaintCanvas(64, Color.black))
                 {
                     canvas.Paint(quad, Matrix4x4.identity, 0, new Vector3(0.5f, 0.5f, 0),
-                        2, 1, 1, 1, new Vector4(1, 0, 0, 0));
+                        2, 1, 1, Vector4.one, new Vector4(1, 0, 0, 0));
                     Texture2D readback = canvas.ReadbackDilated(quad, 0);
                     try
                     {
@@ -202,7 +202,7 @@ namespace Malloc.ChannelPainter.Editor
             {
                 using (var canvas = new PaintCanvas(64, Color.white))
                 {
-                    canvas.PaintUV(quad, 0, new Vector2(0.25f, 0.75f), 4, 1, 1, 0,
+                    canvas.PaintUV(quad, 0, new Vector2(0.25f, 0.75f), 4, 1, 1, Vector4.zero,
                         new Vector4(1, 0, 0, 0));
                     Texture2D readback = canvas.ReadbackDilated(quad, 0);
                     try
@@ -239,7 +239,7 @@ namespace Malloc.ChannelPainter.Editor
             {
                 using (var canvas = new PaintCanvas(64, Color.black))
                 {
-                    canvas.Fill(sliver, 0, null, 1, new Vector4(1, 0, 0, 0));
+                    canvas.Fill(sliver, 0, null, Vector4.one, new Vector4(1, 0, 0, 0));
                     Texture2D readback = canvas.ReadbackDilated(sliver, 0);
                     try
                     {
@@ -344,9 +344,9 @@ namespace Malloc.ChannelPainter.Editor
                 using (var canvas = new PaintCanvas(64, new Color(0.5f, 0.5f, 0.5f, 0.5f)))
                 {
                     canvas.BlendMode = BrushBlend.Add;
-                    canvas.Fill(quad, 0, null, 0.25f, new Vector4(1, 0, 0, 0));
+                    canvas.Fill(quad, 0, null, Vector4.one * 0.25f, new Vector4(1, 0, 0, 0));
                     canvas.BlendMode = BrushBlend.Subtract;
-                    canvas.Fill(quad, 0, null, 0.125f, new Vector4(0, 1, 0, 0));
+                    canvas.Fill(quad, 0, null, Vector4.one * 0.125f, new Vector4(0, 1, 0, 0));
                     Texture2D readback = canvas.ReadbackDilated(quad, 0);
                     try
                     {
@@ -448,6 +448,87 @@ namespace Malloc.ChannelPainter.Editor
             Assert.That(result.g, Is.EqualTo(0f));
             Assert.That(result.b, Is.EqualTo(1f));
             Assert.That(result.a, Is.EqualTo(0.5f));
+        }
+
+        [Test]
+        public void ColorReplaceWritesOnlyMaskedChannels()
+        {
+            Mesh quad = Quad();
+            try
+            {
+                using (var canvas = new PaintCanvas(64, Color.white))
+                {
+                    canvas.Fill(quad, 0, null, new Vector4(0.1f, 0.2f, 0.3f, 0.4f), new Vector4(1, 1, 1, 0));
+                    Texture2D readback = canvas.ReadbackDilated(quad, 0);
+                    try
+                    {
+                        Color texel = readback.GetPixelBilinear(0.5f, 0.5f);
+                        Assert.That(texel.r, Is.EqualTo(0.1f).Within(0.01f));
+                        Assert.That(texel.g, Is.EqualTo(0.2f).Within(0.01f));
+                        Assert.That(texel.b, Is.EqualTo(0.3f).Within(0.01f));
+                        Assert.That(texel.a, Is.EqualTo(1f).Within(0.01f));
+                    }
+                    finally
+                    {
+                        Object.DestroyImmediate(readback);
+                    }
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(quad);
+            }
+        }
+
+        [Test]
+        public void ValueRangeRemapRoundTrips()
+        {
+            Assert.That(ChannelPainterWindow.RemapToDisplay(0.5f, -0.02f, 0.02f), Is.EqualTo(0f).Within(1e-6f));
+            foreach (float value in new[] { 0f, 0.25f, 0.5f, 0.75f, 1f })
+            {
+                float display = ChannelPainterWindow.RemapToDisplay(value, -0.02f, 0.02f);
+                Assert.That(ChannelPainterWindow.RemapFromDisplay(display, -0.02f, 0.02f), Is.EqualTo(value).Within(1e-5f));
+            }
+        }
+
+        [Test]
+        public void SampleReturnsTheFilledValue()
+        {
+            Mesh quad = Quad();
+            try
+            {
+                using (var canvas = new PaintCanvas(64, Color.black))
+                {
+                    canvas.Fill(quad, 0, null, new Vector4(0.25f, 0.5f, 0.75f, 1f), Vector4.one);
+                    Color texel = canvas.Sample(new Vector2(0.3f, 0.6f));
+                    Assert.That(texel.r, Is.EqualTo(0.25f).Within(0.01f));
+                    Assert.That(texel.g, Is.EqualTo(0.5f).Within(0.01f));
+                    Assert.That(texel.b, Is.EqualTo(0.75f).Within(0.01f));
+                    Assert.That(texel.a, Is.EqualTo(1f).Within(0.01f));
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(quad);
+            }
+        }
+
+        static Mesh Quad()
+        {
+            return new Mesh
+            {
+                vertices = new[]
+                {
+                    new Vector3(0, 0, 0), new Vector3(1, 0, 0),
+                    new Vector3(1, 1, 0), new Vector3(0, 1, 0)
+                },
+                uv = new[]
+                {
+                    new Vector2(0, 0), new Vector2(1, 0),
+                    new Vector2(1, 1), new Vector2(0, 1)
+                },
+                triangles = new[] { 0, 1, 2, 0, 2, 3 }
+            };
         }
     }
 }

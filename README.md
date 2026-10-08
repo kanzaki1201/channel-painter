@@ -45,6 +45,10 @@ Or clone the repository into your project's `Packages/` folder.
 
 ## Panel
 
+The panel has five sections in workflow order: Target, Canvas, Paint, View, and Save.
+Each section folds.
+A section shows only the controls that the current output and tool use.
+
 ### Target
 
 | Setting | Use |
@@ -70,18 +74,37 @@ Or clone the repository into your project's `Packages/` folder.
 
 | Setting | Use |
 |---|---|
-| Start Painting / Stop Painting | Turns painting on in the Scene view and the UV window |
+| Start Painting / Stop Painting | Turns painting on in the Scene view and the UV window. The button is highlighted while painting. |
 | Tool | **Brush** paints strokes. **Fill Island** fills the UV island you click. |
-| Brush Space | **World**: a sphere around the point under the cursor. **Screen**: a circle on screen that paints only the front-most surface of the target. |
-| Blend | **Replace** sets the value. **Add** and **Subtract** change the current value. |
-| Value | The target value in Replace, the amount in Add and Subtract |
-| Radius (world units) / Screen Radius (px) | Brush size |
-| Hardness | How much of the radius paints at full strength before the edge falloff |
-| Strength | How strongly each brush step applies |
-| Pen Pressure → Strength / Size | Scales Strength or the radius with pen pressure. A mouse is unaffected. |
-| Paint On Channels | The R, G, B, A channels a stroke changes |
-| Fill Canvas | Applies Value to the whole submesh |
+| Fill Canvas | Applies Value or Color to the whole submesh |
 | Undo | Undoes the last stroke or fill (10 steps) |
+| Value Mode | **Channel Value** paints one value into the enabled channels. **Color** paints an RGBA color. |
+| Blend | **Replace** sets the value. **Add** and **Subtract** change the current value. |
+| Value | Channel Value mode. The target value in Replace, the amount in Add and Subtract. |
+| Color | Color mode. Opens Unity's color picker. In Add and Subtract, each channel of the color is the amount for that channel. |
+| Eyedropper | Picks from the canvas with the next left click (see below) |
+| Recent Colors | Color mode. The last 8 colors that a stroke or fill used. Click one to paint with it. |
+| Brush Space | Brush tool. **World**: a sphere around the point under the cursor. **Screen**: a circle on screen that paints only the front-most surface of the target. |
+| Radius (world units) / Screen Radius (px) | Brush tool. Brush size. |
+| Hardness | Brush tool. How much of the radius paints at full strength before the edge falloff. |
+| Strength | Brush tool. How strongly each brush step applies. |
+| Pen Pressure → Strength / Size | Brush tool. Scales Strength or the radius with pen pressure. A mouse is unaffected. |
+| Paint On Channels | The R, G, B, A channels a stroke changes. In Color mode they mask the color. |
+
+#### Color mode
+
+The canvas stores the color exactly as the color field shows it, with no sRGB conversion.
+For a control map, the picked value is the value the shader reads.
+A new color painted into an albedo map displays lighter than picked, because the saved map is linear.
+
+#### Eyedropper
+
+Click the eyedropper button, then left-click the mesh in the Scene view or the canvas in the UV window.
+It reads the canvas, not the lit screen.
+In Color mode it sets Color.
+In Channel Value mode it sets Value from the first enabled channel.
+One click picks and turns the eyedropper off.
+Click the button again to cancel.
 
 ### View
 
@@ -91,7 +114,19 @@ Or clone the repository into your project's `Packages/` folder.
 | Show Mask In Scene View | Draws the selected channel unlit on the mesh |
 | Mask Source | Map output only. **Canvas** shows the paint. **Vertex Color** shows the mesh's existing vertex colors, with or without a canvas. |
 | Hide Mouse Cursor While Painting | Shows only the brush circle while the Brush tool paints. On by default. |
+| Value Range, Min, Max | Shows Value in shader units (see below). Off by default, Min -1, Max 1. |
 | Open UV Window | Opens the 2D UV window |
+
+#### Value Range
+
+Value Range shows and edits Value in the units that the shader uses.
+For example, Min -0.02 and Max 0.02 shows a depth map in metres.
+
+- In Replace, Value shows as `lerp(Min, Max, Value)`.
+- In Add and Subtract, Value is an amount, so it shows as `Value × (Max − Min)`.
+
+The stored value stays 0 to 1.
+When Max is not greater than Min, the range is ignored and a warning shows.
 
 ### Save
 
@@ -108,6 +143,7 @@ Saved maps import with sRGB off and no compression, because they hold control va
 | Input | Action |
 |---|---|
 | Left drag | Paint, with the radius in canvas texels |
+| Left click with the eyedropper on | Pick from the canvas |
 | Scroll | Zoom around the cursor |
 | Middle drag, or Alt + left drag | Pan |
 | F, or the Fit button | Fit the canvas to the window |
