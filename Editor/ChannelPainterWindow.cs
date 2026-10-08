@@ -81,6 +81,7 @@ namespace Malloc.ChannelPainter.Editor
         [SerializeField] float rangeMin = -1;
         [SerializeField] float rangeMax = 1;
         bool eyedropperArmed;
+        bool swallowUntilMouseUp;
 
         PaintCanvas canvas;
         PaintSession session;
@@ -385,6 +386,7 @@ namespace Malloc.ChannelPainter.Editor
         void CreateGUI()
         {
             VisualElement root = rootVisualElement;
+            root.Clear();
             var sheet = AssetDatabase.LoadAssetAtPath<StyleSheet>(StylePath);
             if (sheet != null)
                 root.styleSheets.Add(sheet);
@@ -557,6 +559,7 @@ namespace Malloc.ChannelPainter.Editor
                 eyedropperButton.text = "Pick";
             valueRow.Add(eyedropperButton);
             swatchRow = Row(paintSection, "Recent Colors", "Click a swatch to paint with it.");
+            swatchRow.AddToClassList("cp-swatch-row");
             swatchButtons = new Button[SwatchCount];
             for (int i = 0; i < SwatchCount; i++)
             {
@@ -848,6 +851,7 @@ namespace Malloc.ChannelPainter.Editor
             {
                 EndStroke();
                 ResetCursor();
+                eyedropperArmed = false;
             }
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
@@ -933,7 +937,7 @@ namespace Malloc.ChannelPainter.Editor
 
         public static float RemapFromDisplay(float display, float min, float max)
         {
-            return Mathf.Clamp01((display - min) / (max - min));
+            return max > min ? Mathf.Clamp01((display - min) / (max - min)) : 0f;
         }
 
         // Widening first keeps the current value inside the range, so no clamp sends a change event.
@@ -941,7 +945,7 @@ namespace Malloc.ChannelPainter.Editor
         {
             slider.lowValue = Mathf.Min(slider.lowValue, low);
             slider.highValue = Mathf.Max(slider.highValue, high);
-            if (!Mathf.Approximately(slider.value, display))
+            if (Mathf.Abs(slider.value - display) > Mathf.Abs(high - low) * 1e-6f)
                 slider.SetValueWithoutNotify(display);
             slider.lowValue = low;
             slider.highValue = high;
@@ -1105,6 +1109,7 @@ namespace Malloc.ChannelPainter.Editor
             EndSession();
             ReleaseCanvas();
             paint = false;
+            eyedropperArmed = false;
             hasHit = false;
             hasHoverUV = false;
             ClearIslands();
@@ -1455,6 +1460,15 @@ namespace Malloc.ChannelPainter.Editor
 
         void OnSceneGUI(SceneView view)
         {
+            Event current = Event.current;
+            if (swallowUntilMouseUp && current.button == 0 && (current.type == EventType.MouseDrag ||
+                current.type == EventType.MouseUp))
+            {
+                if (current.type == EventType.MouseUp)
+                    swallowUntilMouseUp = false;
+                current.Use();
+                return;
+            }
             if (eyedropperArmed && target != null && canvas != null)
             {
                 HandleEyedropperSceneGUI(view);
@@ -1487,7 +1501,10 @@ namespace Malloc.ChannelPainter.Editor
             HandleUtility.AddDefaultControl(GUIUtility.GetControlID(FocusType.Passive));
             if (evt.type == EventType.MouseDown && evt.button == 0 &&
                 UpdateSceneHit(evt, out _, out _, out _) && hasHoverUV)
+            {
                 PickAt(hoverUV);
+                swallowUntilMouseUp = true;
+            }
             if (evt.button == 0 && (evt.type == EventType.MouseDown ||
                 evt.type == EventType.MouseDrag || evt.type == EventType.MouseUp))
                 evt.Use();
@@ -1579,7 +1596,6 @@ namespace Malloc.ChannelPainter.Editor
             UpdateVertexColors(false);
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
-            RefreshPanel();
             evt.Use();
         }
 

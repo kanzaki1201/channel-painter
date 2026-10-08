@@ -235,3 +235,7 @@
 .cp-root .unity-help-box {
     margin: 2px 3px;
 }
+
+.cp-root .cp-swatch-row {
+    flex-wrap: wrap;
+}

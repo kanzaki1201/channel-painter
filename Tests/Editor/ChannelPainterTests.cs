@@ -505,6 +505,11 @@ namespace Malloc.ChannelPainter.Editor
                     Assert.That(texel.g, Is.EqualTo(0.5f).Within(0.01f));
                     Assert.That(texel.b, Is.EqualTo(0.75f).Within(0.01f));
                     Assert.That(texel.a, Is.EqualTo(1f).Within(0.01f));
+
+                    // A painted dot proves Sample uses the same UV orientation as painting.
+                    canvas.PaintUV(quad, 0, new Vector2(0.25f, 0.75f), 4, 1, 1, Vector4.zero, new Vector4(1, 0, 0, 0));
+                    Assert.That(canvas.Sample(new Vector2(0.25f, 0.75f)).r, Is.LessThan(0.1f));
+                    Assert.That(canvas.Sample(new Vector2(0.25f, 0.25f)).r, Is.EqualTo(0.25f).Within(0.01f));
                 }
             }
             finally
