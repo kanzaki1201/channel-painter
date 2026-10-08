@@ -975,9 +975,9 @@ namespace Malloc.ChannelPainter.Editor
             {
                 if (posedMesh == null)
                     posedMesh = new Mesh { hideFlags = HideFlags.HideAndDontSave };
+                // BakeMesh with useScale keeps the renderer's local space, so the full localToWorldMatrix places it.
                 skinned.BakeMesh(posedMesh, true);
                 mesh = posedMesh;
-                matrix = Matrix4x4.TRS(target.transform.position, target.transform.rotation, Vector3.one);
             }
             return mesh != null && mesh.uv.Length == mesh.vertexCount;
         }
