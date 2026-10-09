@@ -1,0 +1,241 @@
+.cp-root {
+    padding: 2px 0 6px 0;
+}
+
+.cp-root > .unity-scroll-view {
+    flex-grow: 1;
+}
+
+.cp-root .unity-base-field__label,
+.cp-row-label {
+    width: 160px;
+    min-width: 160px;
+    max-width: 160px;
+    flex-shrink: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Section headers */
+
+.cp-section {
+    margin: 4px 4px 2px 4px;
+    border-width: 1px;
+    border-radius: 4px;
+    border-color: rgba(0, 0, 0, 0.25);
+    background-color: rgba(255, 255, 255, 0.03);
+}
+
+.cp-section > .unity-foldout__toggle {
+    margin: 0;
+    padding: 4px 6px;
+    border-top-left-radius: 3px;
+    border-top-right-radius: 3px;
+    background-color: rgba(255, 255, 255, 0.06);
+    border-bottom-width: 1px;
+    border-bottom-color: rgba(0, 0, 0, 0.2);
+}
+
+.cp-section > .unity-foldout__toggle:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.cp-section > .unity-foldout__toggle .unity-label {
+    -unity-font-style: bold;
+    font-size: 12px;
+}
+
+.cp-section > .unity-foldout__content {
+    margin: 4px 6px 6px 4px;
+}
+
+/* Rows */
+
+.cp-row {
+    flex-direction: row;
+    align-items: center;
+    margin: 1px 3px;
+    min-height: 20px;
+}
+
+.cp-row-label {
+    padding-left: 1px;
+    -unity-text-align: middle-left;
+}
+
+.cp-button-row,
+.cp-tool-row,
+.cp-value-row {
+    flex-direction: row;
+    align-items: center;
+}
+
+.cp-button-row > .unity-button {
+    flex-grow: 1;
+    flex-basis: 0;
+}
+
+.cp-value-row > .unity-base-field {
+    flex-grow: 1;
+    flex-shrink: 1;
+}
+
+.cp-spacer {
+    flex-grow: 1;
+}
+
+.cp-arrow {
+    margin: 0 4px;
+    -unity-text-align: middle-center;
+}
+
+.cp-row > .unity-base-field {
+    margin-left: 0;
+    margin-right: 0;
+    min-width: 44px;
+}
+
+/* Start / Stop Painting */
+
+.cp-root .cp-primary {
+    height: 32px;
+    margin: 2px 3px 6px 3px;
+    font-size: 13px;
+    -unity-font-style: bold;
+    border-radius: 4px;
+    background-color: rgb(58, 121, 187);
+    border-color: rgb(40, 90, 145);
+    color: rgb(255, 255, 255);
+}
+
+.cp-root .cp-primary.unity-button:hover {
+    background-color: rgb(70, 136, 205);
+}
+
+.cp-root .cp-primary.cp-painting {
+    background-color: rgb(196, 72, 62);
+    border-color: rgb(150, 50, 44);
+}
+
+.cp-root .cp-primary.cp-painting.unity-button:hover {
+    background-color: rgb(212, 86, 76);
+}
+
+/* Tool buttons */
+
+.cp-tool-row {
+    margin: 0 0 4px 0;
+}
+
+.cp-root .cp-tool {
+    flex-direction: row;
+    align-items: center;
+    height: 26px;
+    padding: 0 8px 0 4px;
+}
+
+.cp-tool > .unity-image {
+    width: 18px;
+    height: 18px;
+    margin-right: 4px;
+}
+
+.cp-tool-row > .unity-button {
+    height: 26px;
+}
+
+/* Segmented rows */
+
+.cp-segment {
+    flex-direction: row;
+    flex-grow: 1;
+}
+
+.cp-root .cp-segment-button {
+    flex-grow: 1;
+    flex-basis: 0;
+    margin: 0 1px 0 0;
+    border-radius: 2px;
+}
+
+.cp-root .cp-segment .cp-segment-button.cp-active,
+.cp-root .cp-tool-row .cp-tool.cp-active,
+.cp-root .cp-value-row .cp-eyedropper.cp-active {
+    background-color: rgb(58, 121, 187);
+    border-color: rgb(40, 90, 145);
+    color: rgb(255, 255, 255);
+}
+
+/* Paint On Channels */
+
+.cp-root .cp-channel {
+    width: 30px;
+    height: 20px;
+    margin: 0 1px 0 0;
+    -unity-font-style: bold;
+}
+
+.cp-root .cp-row .cp-channel.cp-on {
+    color: rgb(255, 255, 255);
+}
+
+.cp-root .cp-row .cp-channel-r.cp-on {
+    background-color: rgb(192, 58, 58);
+    border-color: rgb(140, 40, 40);
+}
+
+.cp-root .cp-row .cp-channel-g.cp-on {
+    background-color: rgb(56, 150, 70);
+    border-color: rgb(38, 105, 50);
+}
+
+.cp-root .cp-row .cp-channel-b.cp-on {
+    background-color: rgb(58, 104, 200);
+    border-color: rgb(40, 74, 145);
+}
+
+.cp-root .cp-row .cp-channel-a.cp-on {
+    background-color: rgb(150, 90, 210);
+    border-color: rgb(110, 60, 160);
+}
+
+/* Eyedropper and swatches */
+
+.cp-root .cp-eyedropper {
+    width: 26px;
+    height: 20px;
+    padding: 1px;
+    margin-left: 2px;
+    align-items: center;
+    justify-content: center;
+}
+
+.cp-eyedropper > .unity-image {
+    width: 16px;
+    height: 16px;
+}
+
+.cp-root .cp-swatch {
+    width: 20px;
+    height: 18px;
+    margin: 0 2px 0 0;
+    padding: 0;
+    border-width: 1px;
+    border-radius: 3px;
+    border-color: rgba(0, 0, 0, 0.45);
+}
+
+.cp-root .cp-swatch.cp-empty {
+    background-color: rgba(128, 128, 128, 0.15);
+    border-color: rgba(128, 128, 128, 0.35);
+}
+
+/* Help boxes */
+
+.cp-root .unity-help-box {
+    margin: 2px 3px;
+}
+
+.cp-root .cp-swatch-row {
+    flex-wrap: wrap;
+}
