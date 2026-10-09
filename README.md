@@ -45,7 +45,7 @@ Or clone the repository into your project's `Packages/` folder.
 
 ## Panel
 
-The panel has five sections in workflow order: Target, Canvas, Paint, View, and Save.
+The panel has six sections in workflow order: Target, Canvas, Paint, Channel Tools, View, and Save.
 Each section folds.
 A section shows only the controls that the current output and tool use.
 
@@ -154,13 +154,15 @@ Saved maps import with sRGB off and no compression, because they hold control va
 | Scroll | Zoom around the cursor |
 | Middle drag, or Alt + left drag | Pan |
 | F, or the Fit button | Fit the canvas to the window |
+| `[`, `]`, or the Radius field | Smaller or larger 2D brush, 1 to 512 texels |
+| Channel dropdown | Same as Show Channel in the panel |
 | UV Overlay | Shows the UV wireframe of the target submesh |
 
 A marker shows where the Scene view cursor sits on the UV layout.
 
 ## Shortcuts
 
-These work only while painting. Rebind them under **Edit > Shortcuts > Channel Painter**.
+These work only while painting.
 
 | Key | Action |
 |---|---|
@@ -168,8 +170,11 @@ These work only while painting. Rebind them under **Edit > Shortcuts > Channel P
 | S | Blend: Subtract |
 | R | Blend: Replace |
 | 1, 2, 3, 4 | Toggle the R, G, B, A channel |
-| `[`, `]` | Smaller or larger brush |
+| `[`, `]` | Smaller or larger brush in the Scene view |
 | Alt + left drag | Orbit the Scene view camera (Unity default) |
+
+Rebind A, S, R, and 1 to 4 under **Edit > Shortcuts > Channel Painter**.
+The other keys are fixed.
 
 While painting, a status box in the Scene view shows the tool, blend, and channels.
 
@@ -190,3 +195,7 @@ Paint stays in memory until you save.
 - A screen brush is blocked only by the target mesh, not by other renderers in front of it.
 - A mesh baked in place loses its paint if another tool regenerates that mesh asset.
 - Windows Ink "press and hold to right-click" can interrupt a pen stroke. Turn it off in Control Panel > Pen and Touch.
+
+## License
+
+MIT. See [LICENSE.md](LICENSE.md).
