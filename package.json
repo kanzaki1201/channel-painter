@@ -1,6 +1,6 @@
 {
   "name": "com.malloc.channel-painter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "displayName": "Channel Painter",
   "description": "Paint RGBA shader control channels in the Unity Editor and bake them to a mask map or vertex color.",
   "unity": "6000.0",
