@@ -4,6 +4,7 @@
   "displayName": "Channel Painter",
   "description": "Paint RGBA shader control channels in the Unity Editor and bake them to a mask map or vertex color.",
   "unity": "6000.0",
+  "license": "MIT",
   "author": {
     "name": "malloc"
   }
