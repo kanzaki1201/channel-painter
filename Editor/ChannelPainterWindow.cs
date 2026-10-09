@@ -818,7 +818,7 @@ namespace Malloc.ChannelPainter.Editor
             Show(saveMapRow, map);
             saveMapRow.SetEnabled(canvas != null);
             Show(bakeButton, !map);
-            bakeButton.SetEnabled(vertexPaint != null);
+            bakeButton.SetEnabled(vertexPaint != null && session?.Detached != true);
         }
 
         void OnPickerGUI()
@@ -2109,7 +2109,7 @@ namespace Malloc.ChannelPainter.Editor
             if (vertexPaint == null)
                 return false;
             StartSession();
-            if (session == null)
+            if (session == null || session.Detached)
                 return false;
             Color[] colors = VertexColorBake.Merge(session.OriginalMesh, vertexPaint.Colors, slot, vertexPaint.PaintedChannels);
             Mesh baked = VertexColorBake.Bake(session.OriginalMesh, colors);

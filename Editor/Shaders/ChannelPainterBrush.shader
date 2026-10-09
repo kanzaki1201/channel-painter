@@ -257,9 +257,9 @@ Shader "Hidden/ChannelPainter/Brush"
                 return mul(_DepthViewProj, mul(_BrushMatrix, input.positionOS));
             }
 
-            float TriangleFragment(uint triangle : SV_PrimitiveID) : SV_Target
+            float TriangleFragment(uint primitiveId : SV_PrimitiveID) : SV_Target
             {
-                return _TargetSubmesh > 0.5 ? triangle + 1.0 : 0.0;
+                return _TargetSubmesh > 0.5 ? primitiveId + 1.0 : 0.0;
             }
             ENDHLSL
         }

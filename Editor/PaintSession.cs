@@ -79,12 +79,6 @@ namespace Malloc.ChannelPainter.Editor
             if (baked == null || renderer == null)
                 return;
 
-            if (Detached)
-            {
-                OriginalMesh = baked;
-                return;
-            }
-
             if (IsVertexColor)
                 SetMesh(OriginalMesh);
             try
