@@ -37,7 +37,7 @@ namespace Malloc.ChannelPainter.Editor
 
         void OnDisable()
         {
-            if (painting)
+            if (painting && ChannelPainterWindow.Active?.IsVertexOutput != true)
                 ChannelPainterWindow.Active?.EndUVStroke();
             if (Active == this)
                 Active = null;
@@ -46,14 +46,15 @@ namespace Malloc.ChannelPainter.Editor
         void OnGUI()
         {
             ChannelPainterWindow main = ChannelPainterWindow.Active;
-            DrawToolbar(main);
-            if (main == null || main.TargetMesh == null || main.Canvas == null)
+            using (new EditorGUI.DisabledScope(main?.IsVertexOutput == true))
+                DrawToolbar(main);
+            if (main == null || main.IsVertexOutput || main.TargetMesh == null || main.Canvas == null)
             {
                 if (painting || panning)
                     GUIUtility.hotControl = 0;
                 painting = false;
                 panning = false;
-                EditorGUILayout.HelpBox("Open Channel Painter and create a canvas for a mesh target.", MessageType.Info);
+                EditorGUILayout.HelpBox("The UV window supports Map output. Open Channel Painter and create a canvas for a mesh target.", MessageType.Info);
                 return;
             }
             if (main.ViewMaterial == null)

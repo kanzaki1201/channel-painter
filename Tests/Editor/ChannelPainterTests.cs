@@ -535,6 +535,210 @@ namespace Malloc.ChannelPainter.Editor
             }
         }
 
+        [TestCase(0f, 0.5f, 1f)]
+        [TestCase(0.5f, 0.5f, 1f)]
+        [TestCase(0.75f, 0.5f, 0.5f)]
+        [TestCase(1f, 0.5f, 0f)]
+        [TestCase(1.1f, 0.5f, 0f)]
+        [TestCase(0.5f, 0f, 0.5f)]
+        [TestCase(1f, 1f, 1f)]
+        public void VertexWeightsUseSmoothFalloffAndHardness(float distance, float hardness, float falloff)
+        {
+            var worldCenter = new Vector3(3, 4, 5);
+            var screenCenter = new Vector2(120, 80);
+            Assert.That(VertexPaint.WorldWeight(worldCenter + Vector3.forward * distance * 4,
+                worldCenter, 4, hardness, 0.6f), Is.EqualTo(0.6f * falloff).Within(1e-6f));
+            Assert.That(VertexPaint.ScreenWeight(screenCenter + Vector2.right * distance * 40,
+                screenCenter, 40, hardness, 0.6f), Is.EqualTo(0.6f * falloff).Within(1e-6f));
+        }
+
+        [TestCase(false, BrushBlend.Replace, 0.5f, 0.5f)]
+        [TestCase(false, BrushBlend.Add, 0.6f, 0.65f)]
+        [TestCase(false, BrushBlend.Subtract, 0.2f, 0.55f)]
+        [TestCase(true, BrushBlend.Replace, 0.5f, 0.5f)]
+        [TestCase(true, BrushBlend.Add, 0.6f, 0.65f)]
+        [TestCase(true, BrushBlend.Subtract, 0.2f, 0.55f)]
+        public void VertexBlendUsesWeightAndChannelMask(bool screen, BrushBlend blend, float red, float alpha)
+        {
+            float weight = screen
+                ? VertexPaint.ScreenWeight(new Vector2(30, 0), Vector2.zero, 40, 0.5f, 0.5f)
+                : VertexPaint.WorldWeight(new Vector3(3, 0, 0), Vector3.zero, 4, 0.5f, 0.5f);
+            Color result = VertexPaint.Apply(new Color(0.4f, 0.3f, 0.2f, 0.6f),
+                new Vector4(0.8f, 0.7f, 0.6f, 0.2f), new Vector4(1, 0, 0, 1), weight, blend);
+            Assert.That(result.r, Is.EqualTo(red).Within(1e-6f));
+            Assert.That(result.g, Is.EqualTo(0.3f));
+            Assert.That(result.b, Is.EqualTo(0.2f));
+            Assert.That(result.a, Is.EqualTo(alpha).Within(1e-6f));
+        }
+
+        [TestCase(BrushBlend.Add, 1f)]
+        [TestCase(BrushBlend.Subtract, 0f)]
+        public void VertexBlendClampsAtTheControlRange(BrushBlend blend, float expected)
+        {
+            Color result = VertexPaint.Apply(new Color(0.5f, 0.5f, 0.5f, 0.5f),
+                Vector4.one, Vector4.one, 1, blend);
+            Assert.That(result, Is.EqualTo(new Color(expected, expected, expected, expected)));
+        }
+
+        [Test]
+        public void VertexReachRequiresAnAdjacentVisibleTriangle()
+        {
+            int[][] adjacency = VertexPaint.BuildAdjacency(5, new[] { 0, 1, 2, 0, 2, 3 });
+            var visible = new System.Collections.Generic.HashSet<int> { 1 };
+            Assert.That(VertexPaint.InReach(adjacency[0], visible), Is.True);
+            Assert.That(VertexPaint.InReach(adjacency[1], visible), Is.False);
+            Assert.That(VertexPaint.InReach(adjacency[2], visible), Is.True);
+            Assert.That(VertexPaint.InReach(adjacency[3], visible), Is.True);
+            Assert.That(VertexPaint.InReach(adjacency[4], visible), Is.False);
+            visible.Clear();
+            Assert.That(VertexPaint.InReach(adjacency[0], visible), Is.False);
+            visible.Add(0);
+            Assert.That(VertexPaint.InReach(adjacency[1], visible), Is.True);
+            Assert.That(VertexPaint.InReach(adjacency[3], visible), Is.False);
+        }
+
+        [Test]
+        public void VertexWorldPaintUsesPosedPositionsAndFullTransform()
+        {
+            Mesh original = Quad();
+            Mesh posed = Object.Instantiate(original);
+            posed.vertices = new[] { new Vector3(5, 0, 0), new Vector3(6, 0, 0),
+                new Vector3(6, 1, 0), new Vector3(5, 1, 0) };
+            try
+            {
+                using (var paint = new VertexPaint(original, 0))
+                {
+                    paint.PaintWorld(posed, Matrix4x4.TRS(new Vector3(10, 0, 0), Quaternion.identity,
+                        new Vector3(2, 3, 1)), new Vector3(20, 0, 0), 1, 1, 1,
+                        Vector4.zero, new Vector4(1, 0, 0, 0));
+                    Assert.That(paint.Colors[0], Is.EqualTo(new Color(0, 1, 1, 1)));
+                    for (int i = 1; i < paint.Colors.Length; i++)
+                        Assert.That(paint.Colors[i], Is.EqualTo(Color.white));
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(posed);
+                Object.DestroyImmediate(original);
+            }
+        }
+
+        [Test]
+        public void VertexArrayRoundTripsThroughStorageAndMaskedBakeMerge()
+        {
+            Mesh mesh = Quad();
+            mesh.subMeshCount = 2;
+            mesh.SetTriangles(new[] { 0, 1, 2 }, 0);
+            mesh.SetTriangles(new[] { 0, 2, 3 }, 1);
+            var original = new Color(0.125f, 0.25f, 0.375f, 0.5f);
+            mesh.colors = new[] { original, original, original, original };
+            try
+            {
+                using (var paint = new VertexPaint(mesh, 0))
+                using (var restored = new VertexPaint(mesh, 0))
+                {
+                    paint.Fill(null, new Vector4(0.75f, 0.625f, 0.5f, 0.875f), new Vector4(1, 0, 0, 1));
+                    paint.CopyChannel(0, 2);
+                    restored.RestoreBytes(paint.ToBytes(), paint.PaintedChannels);
+                    CollectionAssert.AreEqual(paint.Colors, restored.Colors);
+                    Assert.That(restored.PaintedChannels, Is.EqualTo(new Vector4(1, 0, 1, 1)));
+
+                    var current = new Color(0.125f, 1.25f, 0.375f, 0.5f);
+                    mesh.colors = new[] { current, current, current, current };
+                    Color[] merged = VertexColorBake.Merge(mesh, restored.Colors, 0, restored.PaintedChannels);
+                    for (int i = 0; i < 3; i++)
+                        Assert.That(merged[i], Is.EqualTo(new Color(0.75f, 1.25f, 0.75f, 0.875f)));
+                    Assert.That(merged[3], Is.EqualTo(current));
+                    Assert.That(restored.Colors[3], Is.EqualTo(original));
+                    CollectionAssert.AreEqual(new[] { current, current, current, current }, mesh.colors);
+                    Assert.Throws<System.ArgumentException>(() => restored.RestoreBytes(new byte[1], Vector4.one));
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(mesh);
+            }
+        }
+
+        [Test]
+        public void VertexLoadClampsColorsAndUsesWhiteWhenMissing()
+        {
+            Mesh mesh = Quad();
+            try
+            {
+                using (var paint = new VertexPaint(mesh, 0))
+                {
+                    CollectionAssert.AreEqual(new[] { Color.white, Color.white, Color.white, Color.white }, paint.Colors);
+                }
+                var source = new Color(-0.2f, 1.2f, 0.3f, 0.4f);
+                mesh.colors = new[] { source, source, source, source };
+                using (var paint = new VertexPaint(mesh, 0))
+                {
+                    Assert.That(paint.Colors[0], Is.EqualTo(new Color(0, 1, 0.3f, 0.4f)));
+                    Assert.That(paint.PaintedChannels, Is.EqualTo(Vector4.zero));
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(mesh);
+            }
+        }
+
+        [Test]
+        public void VertexUndoKeepsTenSnapshotsAndRestoresTheChannelMask()
+        {
+            Mesh mesh = Quad();
+            try
+            {
+                using (var paint = new VertexPaint(mesh, 0))
+                {
+                    for (int i = 0; i < 11; i++)
+                    {
+                        paint.PushUndo();
+                        paint.Fill(null, Vector4.one * (i / 20f), new Vector4(1, 0, 0, 0));
+                    }
+                    for (int i = 0; i < 10; i++)
+                        paint.Undo();
+                    Assert.That(paint.CanUndo, Is.False);
+                    Assert.That(paint.Colors[0].r, Is.EqualTo(0));
+                    Assert.That(paint.PaintedChannels, Is.EqualTo(new Vector4(1, 0, 0, 0)));
+                    paint.PushUndo();
+                    paint.CopyChannel(0, 3);
+                    paint.Undo();
+                    Assert.That(paint.Colors[0].a, Is.EqualTo(1));
+                    Assert.That(paint.PaintedChannels, Is.EqualTo(new Vector4(1, 0, 0, 0)));
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(mesh);
+            }
+        }
+
+        [Test]
+        public void VertexIslandFillTouchesEachVertexOnceAndSamplesBarycentrically()
+        {
+            Mesh mesh = Quad();
+            mesh.colors = new[] { Color.clear, Color.clear, Color.clear, Color.clear };
+            try
+            {
+                using (var paint = new VertexPaint(mesh, 0))
+                {
+                    paint.BlendMode = BrushBlend.Add;
+                    paint.Fill(new[] { 0, 1, 2, 0, 1, 2 }, Vector4.one * 0.4f, Vector4.one);
+                    Assert.That(paint.Colors[0], Is.EqualTo(new Color(0.4f, 0.4f, 0.4f, 0.4f)));
+                    Assert.That(paint.Colors[3], Is.EqualTo(Color.clear));
+                    Color sampled = paint.Sample(1, new Vector3(0.25f, 0.25f, 0.5f));
+                    Assert.That(sampled.r, Is.EqualTo(0.2f).Within(1e-6f));
+                    Assert.That(sampled.a, Is.EqualTo(0.2f).Within(1e-6f));
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(mesh);
+            }
+        }
+
         static Mesh Quad()
         {
             return new Mesh

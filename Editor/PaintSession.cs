@@ -28,7 +28,7 @@ namespace Malloc.ChannelPainter.Editor
         internal bool IsVertexColor => output == PaintOutput.VertexColor;
 
         internal PaintSession(Renderer renderer, int slot, string property, PaintOutput output,
-            PaintCanvas canvas)
+            Texture preview)
         {
             this.renderer = renderer;
             this.slot = slot;
@@ -53,7 +53,7 @@ namespace Malloc.ChannelPainter.Editor
                 renderer.GetPropertyBlock(originalBlock, slot);
                 var block = new MaterialPropertyBlock();
                 renderer.GetPropertyBlock(block, slot);
-                block.SetTexture(property, canvas.Preview);
+                block.SetTexture(property, preview);
                 renderer.SetPropertyBlock(block, slot);
             }
         }
@@ -78,6 +78,12 @@ namespace Malloc.ChannelPainter.Editor
         {
             if (baked == null || renderer == null)
                 return;
+
+            if (Detached)
+            {
+                OriginalMesh = baked;
+                return;
+            }
 
             if (IsVertexColor)
                 SetMesh(OriginalMesh);

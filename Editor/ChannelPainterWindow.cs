@@ -84,6 +84,7 @@ namespace Malloc.ChannelPainter.Editor
         bool swallowUntilMouseUp;
 
         PaintCanvas canvas;
+        VertexPaint vertexPaint;
         PaintSession session;
         Material viewMaterial;
         Mesh posedMesh;
@@ -99,13 +100,15 @@ namespace Malloc.ChannelPainter.Editor
         bool strokeSnapshotTaken;
         StrokeStamper stamper;
         bool reloading;
-        double lastVertexUpdate;
         Vector3 hitPoint;
         Vector3 hitNormal;
         Vector2 hoverUV;
 
         internal static ChannelPainterWindow Active { get; private set; }
         internal PaintCanvas Canvas => canvas;
+        internal bool IsVertexOutput => output == PaintOutput.VertexColor;
+        bool HasPaintData => IsVertexOutput ? vertexPaint != null : canvas != null;
+        bool CanUndoPaint => IsVertexOutput ? vertexPaint != null && vertexPaint.CanUndo : canvas != null && canvas.CanUndo;
         internal Mesh TargetMesh => target == null ? null : session != null ? session.OriginalMesh : SharedMesh();
         internal int TargetSlot => slot;
         internal bool IsPainting => paint;
@@ -354,6 +357,7 @@ namespace Malloc.ChannelPainter.Editor
         Button eyedropperButton;
         Button restartButton;
         Button bakeButton;
+        Button openUVButton;
         Button[] toolButtons;
         Button[] valueModeButtons;
         Button[] blendButtons;
@@ -475,8 +479,8 @@ namespace Malloc.ChannelPainter.Editor
                 RefreshPanel();
             });
             resetMeshButton = AddButton(canvasSection, "Reset To Mesh Colors",
-                "Replace the canvas with the vertex colors of the original mesh.", () => ChangeSelection(NewCanvas));
-            AddButton(canvasSection, "Import Texture...", "Pick any texture and import it into the canvas.", () =>
+                "Load the vertex colors from the original mesh.", () => ChangeSelection(NewCanvas));
+            AddButton(canvasSection, "Import Texture...", "Load a texture into the map or sample it at each target vertex UV0.", () =>
             {
                 pickerCatcher.Focus();
                 EditorGUIUtility.ShowObjectPicker<Texture>(null, false, "", PickerId);
@@ -496,7 +500,7 @@ namespace Malloc.ChannelPainter.Editor
             var toolSpacer = new VisualElement();
             toolSpacer.AddToClassList("cp-spacer");
             toolRow.Add(toolSpacer);
-            fillCanvasButton = AddButton(toolRow, "Fill Canvas", "Apply Value or Color to every texel of the target submesh.", () => FillTriangles(null));
+            fillCanvasButton = AddButton(toolRow, "Fill Canvas", "Apply Value or Color to all paint data of the target submesh.", () => FillTriangles(null));
             undoButton = AddButton(toolRow, "Undo", "Undo the last stroke or fill.", UndoCanvas);
             Segmented(paintSection, "Value Mode", ValueModeLabels,
                 "Channel Value paints one value into the enabled channels. Color paints an RGBA color, masked by the enabled channels.",
@@ -527,7 +531,7 @@ namespace Malloc.ChannelPainter.Editor
             valueRow.Add(colorField);
             eyedropperButton = new Button(ToggleEyedropper)
             {
-                tooltip = "Pick from the canvas: click the mesh in the Scene view or the canvas in the UV window."
+                tooltip = "Pick a stored map value or interpolated vertex color from the mesh. Map values can also be picked in the UV window."
             };
             eyedropperButton.AddToClassList("cp-eyedropper");
             if (eyedropperIcon != null)
@@ -546,7 +550,7 @@ namespace Malloc.ChannelPainter.Editor
                 swatchRow.Add(swatchButtons[i]);
             }
             brushSpaceRow = Segmented(paintSection, "Brush Space", BrushSpaceLabels,
-                "World: a sphere around the point under the cursor. Screen: a circle on screen that paints only the front-most surface of the target.",
+                "World: a sphere around the cursor hit. Screen: a circle that reaches visible target surfaces and their vertices.",
                 index =>
                 {
                     brushSpace = (BrushSpace)index;
@@ -585,7 +589,7 @@ namespace Malloc.ChannelPainter.Editor
             // One-off channel operations sit apart from painting, collapsed by default.
             Foldout toolsSection = Section(scroll, "Channel Tools");
             toolsSection.value = false;
-            VisualElement copyRow = Row(toolsSection, "Copy Channel", "Copy one channel of the canvas into another.");
+            VisualElement copyRow = Row(toolsSection, "Copy Channel", "Copy one channel into another in the map or target vertex colors.");
             copyFromField = Dropdown(copyRow, null, ChannelNames, index =>
             {
                 copyFrom = index;
@@ -599,18 +603,7 @@ namespace Malloc.ChannelPainter.Editor
                 copyTo = index;
                 RefreshPanel();
             });
-            copyButton = AddButton(copyRow, "Copy", null, () =>
-            {
-                if (canvas == null || copyFrom == copyTo)
-                    return;
-                canvas.PushUndo();
-                canvas.CopyChannel(copyFrom, copyTo);
-                MarkDirty();
-                UpdateVertexColors(true);
-                SceneView.RepaintAll();
-                ChannelPainterUVWindow.Active?.Repaint();
-                RefreshPanel();
-            });
+            copyButton = AddButton(copyRow, "Copy", null, CopyChannel);
 
             viewSection = Section(scroll, "View");
             viewChannelField = Dropdown(viewSection, "Show Channel", ViewLabels, index => ViewChannel = index);
@@ -650,7 +643,7 @@ namespace Malloc.ChannelPainter.Editor
                 RefreshPanel();
             });
             rangeWarning = Box(viewSection, "Max must be greater than Min, so Value shows 0 to 1.", HelpBoxMessageType.Warning);
-            AddButton(viewSection, "Open UV Window", null, ChannelPainterUVWindow.Open);
+            openUVButton = AddButton(viewSection, "Open UV Window", null, ChannelPainterUVWindow.Open);
 
             saveSection = Section(scroll, "Save");
             saveMapRow = new VisualElement();
@@ -749,6 +742,7 @@ namespace Malloc.ChannelPainter.Editor
                 return;
 
             SyncIndex(sizeField, sizeIndex);
+            Show(sizeField, map);
             Show(fillField, map);
             Sync(fillField, fill);
             Show(newCanvasButton, map);
@@ -763,14 +757,14 @@ namespace Malloc.ChannelPainter.Editor
             Show(resetMeshButton, !map);
             SyncIndex(copyFromField, copyFrom);
             SyncIndex(copyToField, copyTo);
-            copyButton.SetEnabled(canvas != null && copyFrom != copyTo);
+            copyButton.SetEnabled(HasPaintData && copyFrom != copyTo);
 
             startButton.text = paint ? "Stop Painting" : "Start Painting";
             startButton.EnableInClassList("cp-painting", paint);
             startButton.SetEnabled(!playing);
             SetActive(toolButtons, (int)tool);
-            fillCanvasButton.SetEnabled(canvas != null && session != null && !playing);
-            undoButton.SetEnabled(canvas != null && canvas.CanUndo);
+            fillCanvasButton.SetEnabled(HasPaintData && session != null && !playing);
+            undoButton.SetEnabled(CanUndoPaint);
             SetActive(valueModeButtons, (int)valueMode);
             SetActive(blendButtons, (int)blend);
             bool colorMode = valueMode == ValueMode.Color;
@@ -780,7 +774,7 @@ namespace Malloc.ChannelPainter.Editor
             Show(colorField, colorMode);
             Sync(colorField, brushColor);
             eyedropperButton.EnableInClassList("cp-active", eyedropperArmed);
-            eyedropperButton.SetEnabled(canvas != null);
+            eyedropperButton.SetEnabled(HasPaintData);
             Show(swatchRow, colorMode);
             for (int i = 0; i < SwatchCount; i++)
             {
@@ -811,6 +805,7 @@ namespace Malloc.ChannelPainter.Editor
             SyncIndex(viewChannelField, viewChannel);
             Sync(showMaskToggle, showMask);
             Show(maskSourceField, map);
+            openUVButton.SetEnabled(map);
             SyncIndex(maskSourceField, maskVertexColor ? 1 : 0);
             Sync(hideCursorToggle, hideCursor);
             Sync(rangeToggle, useRange);
@@ -823,7 +818,7 @@ namespace Malloc.ChannelPainter.Editor
             Show(saveMapRow, map);
             saveMapRow.SetEnabled(canvas != null);
             Show(bakeButton, !map);
-            bakeButton.SetEnabled(canvas != null);
+            bakeButton.SetEnabled(vertexPaint != null);
         }
 
         void OnPickerGUI()
@@ -850,9 +845,9 @@ namespace Malloc.ChannelPainter.Editor
         {
             if (EditorApplication.isPlayingOrWillChangePlaymode)
                 return;
-            if (!paint && canvas == null)
+            if (!paint && !HasPaintData)
                 CreateStartCanvas();
-            paint = !paint && canvas != null;
+            paint = !paint && HasPaintData;
             hasHit = false;
             if (!paint)
             {
@@ -876,11 +871,36 @@ namespace Malloc.ChannelPainter.Editor
 
         void UndoCanvas()
         {
-            if (canvas == null || !canvas.CanUndo)
+            if (!CanUndoPaint)
                 return;
-            canvas.Undo();
+            if (IsVertexOutput)
+                vertexPaint.Undo();
+            else
+                canvas.Undo();
             MarkDirty();
-            UpdateVertexColors(true);
+            SceneView.RepaintAll();
+            ChannelPainterUVWindow.Active?.Repaint();
+            RefreshPanel();
+        }
+
+        void PushUndo()
+        {
+            if (IsVertexOutput)
+                vertexPaint.PushUndo();
+            else
+                canvas.PushUndo();
+        }
+
+        void CopyChannel()
+        {
+            if (!HasPaintData || copyFrom == copyTo)
+                return;
+            PushUndo();
+            if (IsVertexOutput)
+                vertexPaint.CopyChannel(copyFrom, copyTo);
+            else
+                canvas.CopyChannel(copyFrom, copyTo);
+            MarkDirty();
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
             RefreshPanel();
@@ -888,7 +908,7 @@ namespace Malloc.ChannelPainter.Editor
 
         void ToggleEyedropper()
         {
-            eyedropperArmed = !eyedropperArmed && canvas != null;
+            eyedropperArmed = !eyedropperArmed && HasPaintData;
             ResetCursor();
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
@@ -900,7 +920,11 @@ namespace Malloc.ChannelPainter.Editor
         {
             if (canvas == null)
                 return;
-            Color picked = canvas.Sample(uv);
+            PickColor(canvas.Sample(uv));
+        }
+
+        void PickColor(Color picked)
+        {
             if (valueMode == ValueMode.Color)
                 brushColor = picked;
             else
@@ -1172,15 +1196,15 @@ namespace Malloc.ChannelPainter.Editor
         {
             EndSession();
             ReleaseCanvas();
-            canvas = new PaintCanvas(Sizes[sizeIndex], fill);
-            if (output == PaintOutput.VertexColor)
-                canvas.LoadVertexColors(SharedMesh(), slot);
+            if (IsVertexOutput)
+                vertexPaint = new VertexPaint(SharedMesh(), slot);
+            else
+                canvas = new PaintCanvas(Sizes[sizeIndex], fill);
             SyncCanvasState();
             ClearDirty();
             StartSession();
             if (output == PaintOutput.Map && PropertyTexture == null)
                 SaveMap(saveAs: true);
-            UpdateVertexColors(true);
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
         }
@@ -1204,15 +1228,22 @@ namespace Malloc.ChannelPainter.Editor
 
         void Load(Texture texture)
         {
-            if (canvas == null)
+            if (IsVertexOutput)
             {
-                canvas = new PaintCanvas(Sizes[sizeIndex], fill);
+                if (vertexPaint == null)
+                    vertexPaint = new VertexPaint(SharedMesh(), slot);
+                vertexPaint.PushUndo();
+                vertexPaint.ImportTexture(texture);
             }
-            canvas.Load(texture);
+            else
+            {
+                if (canvas == null)
+                    canvas = new PaintCanvas(Sizes[sizeIndex], fill);
+                canvas.Load(texture);
+            }
             SyncCanvasState();
             StartSession();
             MarkDirty();
-            UpdateVertexColors(true);
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
         }
@@ -1220,18 +1251,15 @@ namespace Malloc.ChannelPainter.Editor
         void SwitchOutput(PaintOutput chosen)
         {
             EndSession();
+            ReleaseCanvas();
+            EndStroke();
+            eyedropperArmed = false;
             output = chosen;
             ClearDirty();
-            if (output == PaintOutput.VertexColor)
-            {
-                if (canvas == null)
-                    canvas = new PaintCanvas(Sizes[sizeIndex], fill);
-                canvas.LoadVertexColors(SharedMesh(), slot);
-            }
+            if (IsVertexOutput)
+                vertexPaint = new VertexPaint(SharedMesh(), slot);
             else
             {
-                // The vertex color canvas must never reach the map property, so Map starts from the assigned map.
-                ReleaseCanvas();
                 Texture assigned = PropertyTexture;
                 if (assigned != null)
                 {
@@ -1243,21 +1271,21 @@ namespace Malloc.ChannelPainter.Editor
             }
             SyncCanvasState();
             StartSession();
-            UpdateVertexColors(true);
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
         }
 
         void StartSession()
         {
-            if (session != null || canvas == null || target == null || !HasOutputProperty ||
+            if (session != null || !HasPaintData || target == null || !HasOutputProperty ||
                 EditorApplication.isPlayingOrWillChangePlaymode)
                 return;
             Mesh mesh = SharedMesh();
             if (mesh == null)
                 return;
             RefreshPreview();
-            session = new PaintSession(target, slot, propertyName, output, canvas);
+            session = new PaintSession(target, slot, propertyName, output, canvas?.Preview);
+            UpdateVertexColors();
             if (dirtyFlag)
                 session.MarkDirty();
         }
@@ -1272,6 +1300,8 @@ namespace Malloc.ChannelPainter.Editor
         {
             canvas?.Dispose();
             canvas = null;
+            vertexPaint?.Dispose();
+            vertexPaint = null;
         }
 
         void ReleasePose()
@@ -1313,6 +1343,7 @@ namespace Malloc.ChannelPainter.Editor
         void MarkDirty()
         {
             RefreshPreview();
+            UpdateVertexColors();
             SyncCanvasState();
             dirtyFlag = true;
             session?.MarkDirty();
@@ -1334,6 +1365,11 @@ namespace Malloc.ChannelPainter.Editor
 
         void SyncCanvasState()
         {
+            if (vertexPaint != null)
+            {
+                reloadChannels = vertexPaint.PaintedChannels;
+                return;
+            }
             if (canvas == null)
                 return;
             canvasSize = canvas.Texture.width;
@@ -1345,10 +1381,7 @@ namespace Malloc.ChannelPainter.Editor
             if (state == PlayModeStateChange.ExitingEditMode)
                 EndSession();
             else if (state == PlayModeStateChange.EnteredEditMode)
-            {
                 StartSession();
-                UpdateVertexColors(true);
-            }
         }
 
         void BeforeAssemblyReload()
@@ -1367,9 +1400,15 @@ namespace Malloc.ChannelPainter.Editor
         // Also runs on a plain disable (maximize, layout change), so unsaved paint survives any window rebuild.
         void WriteCanvasFile()
         {
-            if (canvas == null || target == null)
+            if (!HasPaintData || target == null)
                 return;
             SyncCanvasState();
+            Directory.CreateDirectory(Path.GetDirectoryName(ReloadPath));
+            if (IsVertexOutput)
+            {
+                File.WriteAllBytes(ReloadPath, vertexPaint.ToBytes());
+                return;
+            }
             var raw = new Texture2D(canvasSize, canvasSize, TextureFormat.RGBAHalf, false, true);
             RenderTexture previous = RenderTexture.active;
             try
@@ -1377,7 +1416,6 @@ namespace Malloc.ChannelPainter.Editor
                 RenderTexture.active = canvas.Texture;
                 raw.ReadPixels(new Rect(0, 0, canvasSize, canvasSize), 0, 0, false);
                 raw.Apply(false, false);
-                Directory.CreateDirectory(Path.GetDirectoryName(ReloadPath));
                 File.WriteAllBytes(ReloadPath, raw.GetRawTextureData<byte>().ToArray());
             }
             finally
@@ -1390,33 +1428,31 @@ namespace Malloc.ChannelPainter.Editor
         void OnUndoRedo()
         {
             if (session != null && session.AdoptMeshAfterUndo())
-                UpdateVertexColors(true);
+                UpdateVertexColors();
         }
 
         void RestoreAfterReload()
         {
-            if (!File.Exists(ReloadPath) || target == null || canvasSize <= 0)
+            if (!File.Exists(ReloadPath) || target == null)
                 return;
             try
             {
                 byte[] bytes = File.ReadAllBytes(ReloadPath);
-                if (bytes.Length != canvasSize * canvasSize * 8)
-                    return;
-                var raw = new Texture2D(canvasSize, canvasSize, TextureFormat.RGBAHalf, false, true);
-                try
+                if (IsVertexOutput)
                 {
-                    raw.LoadRawTextureData(bytes);
-                    raw.Apply(false, false);
-                    canvas = new PaintCanvas(canvasSize, fill);
-                    canvas.RestoreRaw(raw);
-                    canvas.RestorePaintedChannels(reloadChannels);
+                    Mesh mesh = SharedMesh();
+                    if (mesh == null || bytes.Length != mesh.vertexCount * 16)
+                        return;
+                    vertexPaint = new VertexPaint(mesh, slot);
+                    vertexPaint.RestoreBytes(bytes, reloadChannels);
                 }
-                finally
+                else
                 {
-                    DestroyImmediate(raw);
+                    if (canvasSize <= 0 || bytes.Length != canvasSize * canvasSize * 8)
+                        return;
+                    RestoreMap(bytes);
                 }
                 StartSession();
-                UpdateVertexColors(true);
             }
             finally
             {
@@ -1424,9 +1460,26 @@ namespace Malloc.ChannelPainter.Editor
             }
         }
 
+        void RestoreMap(byte[] bytes)
+        {
+            var raw = new Texture2D(canvasSize, canvasSize, TextureFormat.RGBAHalf, false, true);
+            try
+            {
+                raw.LoadRawTextureData(bytes);
+                raw.Apply(false, false);
+                canvas = new PaintCanvas(canvasSize, fill);
+                canvas.RestoreRaw(raw);
+                canvas.RestorePaintedChannels(reloadChannels);
+            }
+            finally
+            {
+                DestroyImmediate(raw);
+            }
+        }
+
         bool PaintMesh(out Mesh mesh, out Matrix4x4 matrix)
         {
-            if (target == null)
+            if (target == null || session?.Detached == true)
             {
                 mesh = null;
                 matrix = Matrix4x4.identity;
@@ -1489,12 +1542,12 @@ namespace Malloc.ChannelPainter.Editor
                 current.Use();
                 return;
             }
-            if (eyedropperArmed && target != null && canvas != null)
+            if (eyedropperArmed && target != null && HasPaintData)
             {
                 HandleEyedropperSceneGUI(view);
                 return;
             }
-            if (!paint || target == null || canvas == null || session == null)
+            if (!paint || target == null || !HasPaintData || session == null)
                 return;
             Handles.BeginGUI();
             ApplyPaintCursor(new Rect(0, 0, view.position.width, view.position.height));
@@ -1520,14 +1573,25 @@ namespace Malloc.ChannelPainter.Editor
             Handles.EndGUI();
             HandleUtility.AddDefaultControl(GUIUtility.GetControlID(FocusType.Passive));
             if (evt.type == EventType.MouseDown && evt.button == 0 &&
-                UpdateSceneHit(evt, out _, out _, out _) && hasHoverUV)
+                UpdateSceneHit(evt, out _, out _, out RaycastHit hit) && hasHit)
             {
-                PickAt(hoverUV);
+                PickSceneColor(hit);
                 swallowUntilMouseUp = true;
             }
             if (evt.button == 0 && (evt.type == EventType.MouseDown ||
                 evt.type == EventType.MouseDrag || evt.type == EventType.MouseUp))
                 evt.Use();
+        }
+
+        void PickSceneColor(RaycastHit hit)
+        {
+            int triangle = SubmeshTriangle(TargetMesh, hit.triangleIndex);
+            if (triangle < 0)
+                return;
+            if (IsVertexOutput)
+                PickColor(vertexPaint.Sample(triangle, hit.barycentricCoordinate));
+            else if (hasHoverUV)
+                PickAt(hoverUV);
         }
 
         void HandleFillSceneGUI(SceneView view)
@@ -1604,24 +1668,41 @@ namespace Malloc.ChannelPainter.Editor
                 strokeSnapshotTaken = false;
             if (!strokeSnapshotTaken)
             {
-                canvas.PushUndo();
-                canvas.RenderScreenDepth(mesh, matrix, view.camera);
+                PushUndo();
+                if (IsVertexOutput)
+                    vertexPaint.RenderScreenTriangles(mesh, matrix, view.camera);
+                else
+                    canvas.RenderScreenDepth(mesh, matrix, view.camera);
                 stamper.Begin();
                 strokeSnapshotTaken = true;
             }
             Vector2 screenPixel = HandleUtility.GUIPointToScreenPixelCoordinate(evt.mousePosition);
-            canvas.BlendMode = blend;
             stamper.Stamp(screenPixel, PenPressure(evt), screenRadius * StampSpacing, (position, pressure) =>
             {
                 Vector2 pressured = Pressured(strength, screenRadius, pressure, pressureStrength, pressureSize);
-                canvas.PaintScreen(mesh, matrix, slot, view.camera, PaintCanvas.CursorViewport(view.camera, position),
-                    pressured.y, hardness, pressured.x, BrushValue, ChannelMask);
+                PaintScreenStamp(mesh, matrix, view.camera, position, pressured);
             });
             MarkDirty();
-            UpdateVertexColors(false);
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
             evt.Use();
+        }
+
+        void PaintScreenStamp(Mesh mesh, Matrix4x4 matrix, Camera camera, Vector2 position, Vector2 pressured)
+        {
+            if (IsVertexOutput)
+            {
+                vertexPaint.BlendMode = blend;
+                vertexPaint.PaintScreen(mesh, matrix, camera, position,
+                    pressured.y, hardness, pressured.x, BrushValue, ChannelMask);
+                UpdateVertexColors();
+            }
+            else
+            {
+                canvas.BlendMode = blend;
+                canvas.PaintScreen(mesh, matrix, slot, camera, PaintCanvas.CursorViewport(camera, position),
+                    pressured.y, hardness, pressured.x, BrushValue, ChannelMask);
+            }
         }
 
         bool HandleSceneMouseUp(Event evt)
@@ -1789,14 +1870,21 @@ namespace Malloc.ChannelPainter.Editor
 
         void FillTriangles(int[] triangles)
         {
-            if (canvas == null || session == null || TargetMesh == null)
+            if (!HasPaintData || session == null || TargetMesh == null)
                 return;
-            canvas.PushUndo();
-            canvas.BlendMode = blend;
-            canvas.Fill(TargetMesh, slot, triangles, BrushValue, ChannelMask);
+            PushUndo();
+            if (IsVertexOutput)
+            {
+                vertexPaint.BlendMode = blend;
+                vertexPaint.Fill(triangles, BrushValue, ChannelMask);
+            }
+            else
+            {
+                canvas.BlendMode = blend;
+                canvas.Fill(TargetMesh, slot, triangles, BrushValue, ChannelMask);
+            }
             PushSwatch();
             MarkDirty();
-            UpdateVertexColors(true);
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
             RefreshPanel();
@@ -1815,21 +1903,34 @@ namespace Malloc.ChannelPainter.Editor
             {
                 if (!strokeSnapshotTaken)
                 {
-                    canvas.PushUndo();
+                    PushUndo();
                     strokeSnapshotTaken = true;
                 }
-                canvas.BlendMode = blend;
                 stamper.Stamp(hitPoint, PenPressure(evt), radius * StampSpacing, (position, pressure) =>
                 {
                     Vector2 pressured = Pressured(strength, radius, pressure, pressureStrength, pressureSize);
-                    canvas.Paint(mesh, matrix, slot, position, pressured.y, hardness, pressured.x, BrushValue, ChannelMask);
+                    PaintWorldStamp(mesh, matrix, position, pressured);
                 });
                 MarkDirty();
-                UpdateVertexColors(false);
                 SceneView.RepaintAll();
                 ChannelPainterUVWindow.Active?.Repaint();
             }
             evt.Use();
+        }
+
+        void PaintWorldStamp(Mesh mesh, Matrix4x4 matrix, Vector3 position, Vector2 pressured)
+        {
+            if (IsVertexOutput)
+            {
+                vertexPaint.BlendMode = blend;
+                vertexPaint.PaintWorld(mesh, matrix, position, pressured.y, hardness, pressured.x, BrushValue, ChannelMask);
+                UpdateVertexColors();
+            }
+            else
+            {
+                canvas.BlendMode = blend;
+                canvas.Paint(mesh, matrix, slot, position, pressured.y, hardness, pressured.x, BrushValue, ChannelMask);
+            }
         }
 
         // A mouse reports no pressure, so only a pen scales the brush.
@@ -1906,7 +2007,6 @@ namespace Malloc.ChannelPainter.Editor
                 canvas.PaintUV(TargetMesh, slot, (Vector2)position / size, pressured.y, hardness, pressured.x, BrushValue, ChannelMask);
             });
             MarkDirty();
-            UpdateVertexColors(false);
             SceneView.RepaintAll();
             ChannelPainterUVWindow.Active?.Repaint();
         }
@@ -1920,7 +2020,6 @@ namespace Malloc.ChannelPainter.Editor
         {
             if (strokeSnapshotTaken)
             {
-                UpdateVertexColors(true);
                 PushSwatch();
             }
             strokeSnapshotTaken = false;
@@ -1928,31 +2027,25 @@ namespace Malloc.ChannelPainter.Editor
             ChannelPainterUVWindow.Active?.Repaint();
         }
 
-        void UpdateVertexColors(bool force)
+        void UpdateVertexColors()
         {
-            if (session == null || !session.IsVertexColor || canvas == null)
-                return;
-            double now = EditorApplication.timeSinceStartup;
-            if (!force && now - lastVertexUpdate < 0.1)
-                return;
-            if (!PaintMesh(out Mesh coverageMesh, out _))
-                return;
-            session.SetColors(canvas.SampleVertices(session.OriginalMesh, coverageMesh, slot));
-            lastVertexUpdate = now;
+            if (vertexPaint != null)
+                session?.SetColors(vertexPaint.Colors);
         }
 
         void OnBeginCameraRendering(ScriptableRenderContext context, Camera camera)
         {
             if (!showMask || camera.cameraType != CameraType.SceneView || viewMaterial == null || target == null)
                 return;
-            if (!maskVertexColor && (canvas == null || session == null))
+            bool vertexColors = IsVertexOutput || maskVertexColor;
+            if (!vertexColors && (canvas == null || session == null))
                 return;
             if (!PaintMesh(out Mesh mesh, out Matrix4x4 matrix))
                 return;
             if (canvas != null)
                 viewMaterial.SetTexture("_MainTex", canvas.Preview);
             viewMaterial.SetInt("_ViewChannel", viewChannel);
-            viewMaterial.SetFloat("_UseVertexColor", maskVertexColor ? 1 : 0);
+            viewMaterial.SetFloat("_UseVertexColor", vertexColors ? 1 : 0);
             viewMaterial.SetFloat("_HasVertexColor", mesh.HasVertexAttribute(VertexAttribute.Color) ? 1 : 0);
             viewMaterial.SetMatrix("_MaskMatrix", matrix);
             Graphics.DrawMesh(mesh, matrix, viewMaterial, 0, camera, slot);
@@ -2013,12 +2106,12 @@ namespace Malloc.ChannelPainter.Editor
 
         bool BakeVertexColor()
         {
-            if (canvas == null || !PaintMesh(out Mesh mesh, out _))
+            if (vertexPaint == null)
                 return false;
             StartSession();
             if (session == null)
                 return false;
-            Color[] colors = canvas.SampleVertices(session.OriginalMesh, mesh, slot);
+            Color[] colors = VertexColorBake.Merge(session.OriginalMesh, vertexPaint.Colors, slot, vertexPaint.PaintedChannels);
             Mesh baked = VertexColorBake.Bake(session.OriginalMesh, colors);
             if (baked == null)
                 return false;

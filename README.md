@@ -37,8 +37,8 @@ Or clone the repository into your project's `Packages/` folder.
 ## Quick start: paint vertex color
 
 1. Pick the Target and Material Slot, and set **Output** to **Vertex color**. No texture property is needed.
-2. Click **Start Painting**. The canvas loads from the mesh's current vertex colors.
-3. Paint. A temporary copy of the mesh shows the colors live.
+2. Click **Start Painting**. The mesh's current vertex colors load as values from 0 to 1. A mesh with no colors starts white.
+3. Paint vertices directly in the Scene view. A temporary copy of the mesh shows each brush step live. Mirrored UV regions can take paint separately.
 4. Click **Bake To Vertex Color**.
    - A mesh asset under `Assets/` is written in place.
    - A mesh inside an FBX or a package is saved as a new `<name>_ChannelPainter` mesh asset and assigned.
@@ -62,18 +62,18 @@ A section shows only the controls that the current output and tool use.
 
 | Control | Use |
 |---|---|
-| Size | Canvas resolution: 512, 1024, 2048, or 4096 |
+| Size | Map output only. Canvas resolution: 512, 1024, 2048, or 4096 |
 | Fill Color | Map output only. The color of a new canvas. |
 | New Canvas | Map output only. Starts a canvas filled with Fill Color. |
 | Import `<property>` From Material | Map output only. Replaces the canvas with the assigned map. |
-| Reset To Mesh Colors | Vertex color output only. Replaces the canvas with the mesh's vertex colors. |
-| Import Texture... | Opens the object picker and copies the picked texture into the canvas |
+| Reset To Mesh Colors | Vertex color output only. Loads the mesh's vertex colors into the paint session. |
+| Import Texture... | Loads the picked texture into the Map canvas, or samples it at each vertex UV0 in Vertex color output and marks all four channels painted. |
 
 ### Paint
 
 | Setting | Use |
 |---|---|
-| Start Painting / Stop Painting | Turns painting on in the Scene view and the UV window. The button is highlighted while painting. |
+| Start Painting / Stop Painting | Turns painting on in the Scene view and, for Map output, the UV window. The button is highlighted while painting. |
 | Tool | **Brush** paints strokes. **Fill Island** fills the UV island you click. |
 | Fill Canvas | Applies Value or Color to the whole submesh |
 | Undo | Undoes the last stroke or fill (10 steps) |
@@ -81,7 +81,7 @@ A section shows only the controls that the current output and tool use.
 | Blend | **Replace** sets the value. **Add** and **Subtract** change the current value. |
 | Value | Channel Value mode. The target value in Replace, the amount in Add and Subtract. |
 | Color | Color mode. Opens Unity's color picker. In Add and Subtract, each channel of the color is the amount for that channel. |
-| Eyedropper | Picks from the canvas with the next left click (see below) |
+| Eyedropper | Picks stored map or vertex colors with the next left click (see below) |
 | Recent Colors | Color mode. The last 8 colors that a stroke or fill used. Click one to paint with it. |
 | Brush Space | Brush tool. **World**: a sphere around the point under the cursor. **Screen** (default): a circle on screen that paints only the front-most surface of the target. |
 | Radius (world units) / Screen Radius (px) | Brush tool. Brush size. |
@@ -98,8 +98,8 @@ A new color painted into an albedo map displays lighter than picked, because the
 
 #### Eyedropper
 
-Click the eyedropper button, then left-click the mesh in the Scene view or the canvas in the UV window.
-It reads the canvas, not the lit screen.
+Click the eyedropper button, then left-click the mesh in the Scene view or, for Map output, the canvas in the UV window.
+It reads stored values: the canvas in Map output, or the hit triangle's interpolated vertex colors in Vertex color output.
 In Color mode it sets Color.
 In Channel Value mode it sets Value from the first enabled channel.
 One click picks and turns the eyedropper off.
@@ -111,18 +111,18 @@ Collapsed by default.
 
 | Control | Use |
 |---|---|
-| Copy Channel | Copies one canvas channel into another, for example B → R. Undo reverts it. |
+| Copy Channel | Copies one channel into another across the Map canvas or the target submesh vertices, for example B → R. Undo reverts it. |
 
 ### View
 
 | Setting | Use |
 |---|---|
-| Show Channel | Shows RGBA, or one channel as grayscale, in the UV window and the scene mask |
+| Show Channel | Shows RGBA, or one channel as grayscale, in the scene mask and, for Map output, the UV window. Vertex color output shows the temporary mesh's colors. |
 | Show Mask In Scene View | Draws the selected channel unlit on the mesh |
 | Mask Source | Map output only. **Canvas** shows the paint. **Vertex Color** shows the mesh's existing vertex colors, with or without a canvas. |
 | Hide Mouse Cursor While Painting | Shows only the brush circle while the Brush tool paints. On by default. |
 | Value Range, Min, Max | Shows Value in shader units (see below). Off by default, Min -1, Max 1. |
-| Open UV Window | Opens the 2D UV window |
+| Open UV Window | Map output only. Opens the 2D UV window. Disabled in Vertex color output. |
 
 #### Value Range
 
@@ -146,6 +146,8 @@ When Max is not greater than Min, the range is ignored and a warning shows.
 Saved maps import with sRGB off and no compression, because they hold control values, not colors.
 
 ## UV window
+
+The UV window serves Map output only.
 
 | Input | Action |
 |---|---|

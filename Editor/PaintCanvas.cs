@@ -105,27 +105,6 @@ namespace Malloc.ChannelPainter.Editor
             PaintedChannels = channels;
         }
 
-        public void LoadVertexColors(Mesh mesh, int submesh)
-        {
-            Clear(Texture, Color.white);
-            var properties = new MaterialPropertyBlock();
-            properties.SetFloat("_HasVertexColor", mesh.HasVertexAttribute(VertexAttribute.Color) ? 1 : 0);
-            var commands = new CommandBuffer { name = "Channel Painter Vertex Colors" };
-            try
-            {
-                commands.SetRenderTarget(Texture);
-                commands.SetViewport(new Rect(0, 0, Texture.width, Texture.height));
-                commands.DrawMesh(mesh, Matrix4x4.identity, brushMaterial, submesh, 2, properties);
-                Graphics.ExecuteCommandBuffer(commands);
-            }
-            finally
-            {
-                commands.Release();
-            }
-            PaintedChannels = Vector4.zero;
-            ClearUndo();
-        }
-
         public void PushUndo()
         {
             RenderTexture snapshot = CreateTexture(Texture.width, RenderTextureFormat.ARGBHalf);
@@ -150,7 +129,7 @@ namespace Malloc.ChannelPainter.Editor
             Graphics.Blit(Texture, source);
             brushMaterial.SetVector("_FromMask", fromMask);
             brushMaterial.SetVector("_ToMask", toMask);
-            Graphics.Blit(source, Texture, brushMaterial, 7);
+            Graphics.Blit(source, Texture, brushMaterial, 5);
             PaintedChannels = Vector4.Max(PaintedChannels, toMask);
         }
 
@@ -230,7 +209,7 @@ namespace Malloc.ChannelPainter.Editor
                     SystemInfo.usesReversedZBuffer ? 0f : 1f);
                 commands.SetViewport(new Rect(0, 0, width, height));
                 for (int i = 0; i < posedMesh.subMeshCount; i++)
-                    commands.DrawMesh(posedMesh, Matrix4x4.identity, brushMaterial, i, 6, properties);
+                    commands.DrawMesh(posedMesh, Matrix4x4.identity, brushMaterial, i, 4, properties);
                 Graphics.ExecuteCommandBuffer(commands);
             }
             finally
@@ -340,8 +319,8 @@ namespace Malloc.ChannelPainter.Editor
             for (int pass = 0; pass < DilationPasses; pass++)
             {
                 brushMaterial.SetTexture("_Coverage", maskRead);
-                Graphics.Blit(colorRead, colorWrite, brushMaterial, 3);
-                Graphics.Blit(maskRead, maskWrite, brushMaterial, 4);
+                Graphics.Blit(colorRead, colorWrite, brushMaterial, 2);
+                Graphics.Blit(maskRead, maskWrite, brushMaterial, 3);
                 (colorRead, colorWrite) = (colorWrite, colorRead);
                 (maskRead, maskWrite) = (maskWrite, maskRead);
             }
@@ -371,61 +350,6 @@ namespace Malloc.ChannelPainter.Editor
         public Texture2D ReadbackDilated(Mesh mesh, int submesh)
         {
             return Readback(Dilate(mesh, submesh), TextureFormat.RGBAFloat);
-        }
-
-        public Color[] SampleVertices(Mesh original, Mesh coverageMesh, int submesh)
-        {
-            int vertexCount = original.vertexCount;
-            Vector2[] uv = original.uv;
-            if (uv == null || uv.Length != vertexCount)
-                throw new ArgumentException("The target mesh has no UV0.", nameof(original));
-
-            if (vertexCount == 0)
-                return Array.Empty<Color>();
-
-            int size = Mathf.CeilToInt(Mathf.Sqrt(vertexCount));
-            var uvTexture = new Texture2D(size, size, TextureFormat.RGFloat, false, true)
-            {
-                filterMode = FilterMode.Point,
-                wrapMode = TextureWrapMode.Clamp,
-                hideFlags = HideFlags.HideAndDontSave
-            };
-            RenderTexture samples = null;
-            try
-            {
-                samples = CreateTexture(size, RenderTextureFormat.ARGBHalf);
-                var positions = new Color[size * size];
-                for (int i = 0; i < vertexCount; i++)
-                    positions[i] = new Color(uv[i].x, uv[i].y, 0, 0);
-                uvTexture.SetPixels(positions);
-                uvTexture.Apply(false, false);
-
-                brushMaterial.SetTexture("_VertexUV", uvTexture);
-                Graphics.Blit(Dilate(coverageMesh, submesh), samples, brushMaterial, 5);
-                Texture2D readback = Readback(samples, TextureFormat.RGBAHalf);
-                try
-                {
-                    Color[] painted = readback.GetPixels();
-                    Color[] existing = original.colors;
-                    var merged = new Color[vertexCount];
-                    for (int i = 0; i < vertexCount; i++)
-                        merged[i] = existing.Length == vertexCount ? existing[i] : Color.white;
-                    foreach (int index in original.GetTriangles(submesh))
-                        merged[index] = VertexColorBake.Merge(merged[index], painted[index], PaintedChannels);
-                    return merged;
-                }
-                finally
-                {
-                    UnityEngine.Object.DestroyImmediate(readback);
-                }
-            }
-            finally
-            {
-                brushMaterial.SetTexture("_VertexUV", null);
-                if (samples != null)
-                    Release(samples);
-                UnityEngine.Object.DestroyImmediate(uvTexture);
-            }
         }
 
         static Texture2D Readback(RenderTexture target, TextureFormat format)

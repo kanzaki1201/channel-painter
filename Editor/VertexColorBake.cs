@@ -17,6 +17,21 @@ namespace Malloc.ChannelPainter.Editor
                 Mathf.Clamp01(mask.w > 0.5f ? painted.a : existing.a));
         }
 
+        public static Color[] Merge(Mesh original, Color[] painted, int submesh, Vector4 mask)
+        {
+            if (painted == null || painted.Length != original.vertexCount)
+                throw new ArgumentException("Vertex color count does not match the mesh.", nameof(painted));
+            Color[] existing = original.colors;
+            var merged = new Color[original.vertexCount];
+            for (int i = 0; i < merged.Length; i++)
+                merged[i] = existing.Length == merged.Length ? existing[i] : Color.white;
+            foreach (int index in original.GetTriangles(submesh))
+                for (int channel = 0; channel < 4; channel++)
+                    if (mask[channel] > 0.5f)
+                        merged[index][channel] = Mathf.Clamp01(painted[index][channel]);
+            return merged;
+        }
+
         public static Mesh Bake(Mesh original, Color[] mergedColors)
         {
             if (original == null || mergedColors == null || mergedColors.Length != original.vertexCount)
